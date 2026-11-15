@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AetherWM — Lightweight Rust X11 Window Manager</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            background-color: #0f1117;
+            color: #c9d1d9;
+            font-family: monospace, sans-serif;
+            line-height: 1.6;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 700px;
+            width: 100%;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 2.5rem;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+        }
+        h1 {
+            color: #58a6ff;
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+        .subtitle {
+            color: #8b949e;
+            font-size: 0.95rem;
+            margin-bottom: 2rem;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 1rem;
+        }
+        p {
+            margin-bottom: 1.2rem;
+        }
+        pre {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            padding: 1rem;
+            overflow-x: auto;
+            color: #7ee787;
+            font-size: 0.9rem;
+            margin: 1.5rem 0;
+        }
+        .btn-container {
+            display: flex;
+            gap: 1rem;
+            margin-top: 2rem;
+        }
+        a.btn {
+            background: #238636;
+            color: #ffffff;
+            padding: 0.75rem 1.25rem;
+            border-radius: 6px;
+            text-decoration: none;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        a.btn:hover {
+            background: #2ea043;
+        }
+        a.btn-secondary {
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+        }
+        a.btn-secondary:hover {
+            background: #30363d;
+        }
+        footer {
+            margin-top: 2rem;
+            font-size: 0.8rem;
+            color: #8b949e;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AetherWM</h1>
+        <div class="subtitle">A blazingly fast, custom X11 tiling window manager written in Rust.</div>
+        
+        <p>AetherWM is built from scratch for minimal overhead, featuring native EWMH integration, seamless Fastfetch detection, and strict resource efficiency.</p>
+        
+        <p>Get started quickly by cloning the repository:</p>
+        <pre><code>git clone https://github.com/azazel21t/AetherWM.git
+cd AetherWM
+cargo build --release</code></pre>
+
+        <div class="btn-container">
+            <a href="https://github.com/azazel21t/AetherWM" class="btn">View on GitHub</a>
+            <a href="https://github.com/azazel21t/AetherWM/blob/main/LICENSE" class="btn btn-secondary">GNU GPLv3 License</a>
+        </div>
+    </div>
+
+    <footer>
+        Maintained by azazel21t • Powered by Arch Linux & Rust
+    </footer>
+</body>
+</html>
