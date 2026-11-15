@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Why AetherWM — The Rationale</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <a href="index.html" class="nav-brand">AetherWM</a>
+        <div class="nav-links">
+            <a href="index.html">Home</a>
+            <a href="why.html" class="active">Why</a>
+            <a href="inspiration.html">Inspiration</a>
+            <a href="specs.html">Specs & RAM</a>
+            <a href="https://github.com/azazel21t/AetherWM" target="_blank">GitHub ↗</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="content-box">
+            <h2>Why I Built AetherWM</h2>
+            <p class="subtitle">Cutting through the noise of bloated desktop stacks.</p>
+            
+            <p>Most modern window managers and desktop environments carry an enormous amount of legacy baggage, configuration bloat, or memory overhead inherited from decades-old C and C++ codebases. Segment fault vulnerabilities, memory leaks, and overly complex configuration syntax shouldn't be the price you pay for a fast tiling workflow.</p>
+            
+            <p>I wanted something completely transparent—a window manager where every line of code, every EWMH atom property handler, and every layout calculation is intentional and transparent. Writing it in Rust guarantees memory safety at compile-time without sacrificing the raw, bare-metal speed required for a responsive X11 session.</p>
+
+            <p>AetherWM exists to prove that you don't need gigabytes of background services or bloated desktop toolkits to have a rock-solid, visually clean, and lightning-fast Linux workspace.</p>
+        </div>
+    </div>
+
+    <footer>
+        Maintained by azazel21t • Open source under the GNU GPLv3
+    </footer>
+</body>
+</html>

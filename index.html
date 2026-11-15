@@ -7,6 +7,17 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <nav class="navbar">
+        <a href="index.html" class="nav-brand">AetherWM</a>
+        <div class="nav-links">
+            <a href="index.html" class="active">Home</a>
+            <a href="why.html">Why</a>
+            <a href="inspiration.html">Inspiration</a>
+            <a href="specs.html">Specs & RAM</a>
+            <a href="https://github.com/azazel21t/AetherWM" target="_blank">GitHub ↗</a>
+        </div>
+    </nav>
+
     <div class="container">
         <header>
             <h1>AetherWM</h1>
@@ -16,14 +27,14 @@
                 <span class="badge">Language: Rust</span>
                 <span class="badge">Protocol: X11</span>
                 <span class="badge">License: GNU GPLv3</span>
-                <span class="badge">Performance: Zero Bloat</span>
+                <span class="badge">RAM Usage: 2.2 MiB</span>
             </div>
 
             <p>Designed for power users and minimalists who demand absolute resource efficiency without sacrificing system responsiveness, modern layout control, or proper EWMH desktop state compliance.</p>
 
             <div class="btn-container">
                 <a href="https://github.com/azazel21t/AetherWM" class="btn">View on GitHub</a>
-                <a href="https://github.com/azazel21t/AetherWM/blob/main/LICENSE" class="btn btn-secondary">GPLv3 License</a>
+                <a href="specs.html" class="btn btn-secondary">View Benchmarks</a>
             </div>
         </header>
 
@@ -39,20 +50,13 @@
             </div>
             <div class="feature-card">
                 <h3>🪶 Featherlight Overhead</h3>
-                <p>No heavy desktop environment daemons, no unnecessary abstraction layers. Maximizes CPU cycles and preserves RAM, performing fluidly even on constrained, entry-level hardware.</p>
+                <p>No heavy desktop environment daemons, no unnecessary abstraction layers. Consuming a mere 2.2 MiB of RAM, it preserves system cycles for what matters.</p>
             </div>
             <div class="feature-card">
                 <h3>🛠️ Tiling Purist Control</h3>
                 <p>Delivers precise master-stack layouts and predictable window management, giving you absolute control over your X11 workspace and input bindings.</p>
             </div>
         </div>
-
-        <h2 class="section-title">Quick Installation</h2>
-        <p>Clone the repository, compile the release binary, and integrate it into your Xsession:</p>
-        <pre><code>git clone https://github.com/azazel21t/AetherWM.git
-cd AetherWM
-cargo build --release
-sudo cp target/release/aetherwm /usr/local/bin/</code></pre>
     </div>
 
     <footer>

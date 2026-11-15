@@ -22,7 +22,7 @@ body {
     color: var(--text-main);
     font-family: var(--font-mono);
     line-height: 1.6;
-    padding: 3rem 1.5rem;
+    padding: 0 1.5rem 3rem 1.5rem;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -30,23 +30,59 @@ body {
     overflow-x: hidden;
 }
 
+/* Navbar */
+.navbar {
+    width: 100%;
+    max-width: 900px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.5rem 0;
+    margin-bottom: 2rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.nav-brand {
+    color: var(--accent-blue);
+    font-weight: 700;
+    font-size: 1.2rem;
+    text-decoration: none;
+}
+
+.nav-links {
+    display: flex;
+    gap: 1.2rem;
+    flex-wrap: wrap;
+}
+
+.nav-links a {
+    color: var(--text-muted);
+    text-decoration: none;
+    font-size: 0.9rem;
+    transition: color 0.2s;
+}
+
+.nav-links a:hover, .nav-links a.active {
+    color: var(--accent-blue);
+}
+
 .container {
     max-width: 900px;
     width: 100%;
 }
 
-header {
+header, .content-box {
     background: var(--bg-surface);
     border: 1px solid var(--border-color);
     border-radius: 12px;
-    padding: 3.5rem 3rem;
-    margin-bottom: 2.5rem;
+    padding: 3rem 2.5rem;
+    margin-bottom: 2rem;
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
     position: relative;
     overflow: hidden;
 }
 
-header::before {
+header::before, .content-box::before {
     content: '';
     position: absolute;
     top: 0;
@@ -58,15 +94,26 @@ header::before {
 
 h1 {
     color: var(--accent-blue);
-    font-size: 3rem;
+    font-size: 2.8rem;
     margin-bottom: 0.5rem;
     letter-spacing: -1.5px;
     font-weight: 700;
 }
 
+h2 {
+    color: var(--text-main);
+    font-size: 1.8rem;
+    margin-bottom: 1rem;
+}
+
+p {
+    margin-bottom: 1rem;
+    color: var(--text-main);
+}
+
 .subtitle {
     color: var(--text-muted);
-    font-size: 1.15rem;
+    font-size: 1.1rem;
     margin-bottom: 1.8rem;
 }
 
@@ -140,6 +187,13 @@ pre {
     font-size: 0.95rem;
     margin: 1.5rem 0;
     box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.highlight-stat {
+    font-size: 2.5rem;
+    font-weight: bold;
+    color: var(--accent-green);
+    margin: 1rem 0;
 }
 
 .btn-container {
