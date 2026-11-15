@@ -2,13 +2,13 @@
 
 # AetherWM
 
-**A blazingly fast, uncompromising X11 tiling window manager engineered completely from scratch in Rust.**  
+**A blazingly fast, uncompromising X11 tiling window manager featuring an infinite spatial canvas, continuous zoom, matrix navigation, and multi-monitor support—engineered completely from scratch in Rust.**  
 *Built for minimalists, hackers, and anyone who wants a clean slate to fork, customize, and build upon.*
 
 [![Language: Rust](https://img.shields.io/badge/Language-Rust-orange.svg?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![Protocol: X11](https://img.shields.io/badge/Protocol-X11-blue.svg?style=flat-square)](https://www.x.org/)
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-green.svg?style=flat-square)](https://www.gnu.org/licenses/gpl-3.0)
-[![RAM Usage: 2.2 MiB](https://img.shields.io/badge/RAM-2.2%20MiB-brightgreen.svg?style=flat-square)](https://github.com/azazel21t/AetherWM)
+[![RAM Usage: ~2.2 MiB](https://img.shields.io/badge/RAM-2.2%20MiB-brightgreen.svg?style=flat-square)](https://github.com/azazel21t/AetherWM)
 
 </div>
 
@@ -16,76 +16,143 @@
 
 ## 🌌 What is AetherWM?
 
-AetherWM is a lightweight tiling window manager designed to strip away decades of legacy software bloat, configuration complexity, and heavy desktop environment daemons. Written entirely in **Rust**, it guarantees memory safety at compile-time while delivering bare-metal responsiveness.
+AetherWM breaks away from traditional rigid workspaces by introducing an **infinite spatial canvas and matrix navigation model**. Instead of switching between static numbered tags, you navigate across a boundless 2D coordinate grid (`x, y`), pan seamlessly across open desktop spaces, and zoom in or out of your active window layouts with buttery-smooth scaling.
 
-Whether you're running it on constrained hardware or using it as a clean foundation for your own custom window manager project, AetherWM gets out of your way and gives you total control.
+Written entirely in **Rust** and interfacing directly with X11 and Xrandr, AetherWM guarantees memory safety at compile-time while delivering bare-metal responsiveness and consuming only **~2.2 MiB of RAM**.
 
 ---
 
 ## 🪶 Performance & Benchmarks
 
-Unlike bloated desktop stacks that consume gigabytes of background resources, AetherWM operates with near-zero overhead.
-
 | Metric | Specification |
 | :--- | :--- |
 | **Active RAM Footprint** | **~2.2 MiB** during multi-window tiling workflows |
-| **Primary Test Rig** | HP Laptop 14s-fq0xxx (AMD 3020e, Radeon Vega 3 Integrated Graphics) |
+| **Primary Test Rig** | HP Laptop 14s-fq0xxx (AMD 3020e, Radeon Vega 3 Integrated Graphics) + External Display |
 | **Operating System** | Arch Linux |
-| **Display Server** | X11 |
-| **Display Support** | **Single-display setups only** *(Multi-monitor configurations have NOT been tested yet!)* |
+| **Display Server** | X11 / Xrandr |
+| **Display Support** | **Multi-monitor dynamic clipping & per-monitor tiling** (Mixed resolutions supported) |
 
 ---
 
 ## ✨ Key Features
 
-*   **🦀 Pure Rust Architecture:** Built with strict memory safety guarantees, eliminating memory leaks and undefined behavior common in legacy C/C++ window managers.
-*   **⚡ Native EWMH & Fastfetch Support:** Out-of-the-box Extended Window Manager Hints atom implementation baked into the core runtime for instant desktop state recognition.
-*   **🪶 Featherlight Overhead:** Consuming only 2.2 MiB of RAM, maximizing system cycles for your actual applications.
-*   **🛠️ Tiling Purist Control:** Precise master-stack layout management and predictable window mapping.
+*   **🦀 Pure Rust Architecture:** Strict memory safety guarantees, zero memory leaks, and blazing-fast compilation times (`~3 seconds`).
+*   **🌐 Infinite Spatial Canvas & Continuous Zoom:** Navigate infinitely across a 2D coordinate matrix. Zoom out for an overview or zoom in instantly with smooth interpolation (`MIN_ZOOM` to `1.0`).
+*   **🖥️ Robust Multi-Monitor & Cursor-Aware Spawning:** Automatically detects multi-head setups via Xrandr. New applications spawn directly on the physical monitor where your mouse cursor is resting.
+*   **⚡ EWMH Compliance & Fastfetch Ready:** Native Extended Window Manager Hints baked into the core runtime for full state recognition and compositor compatibility (`picom`, `dunst`, `feh`).
+*   **🛠️ Flexible `.ars` Configuration & Window Rules:** Customize gaps, border widths, colors, and apply class-based window rules via `config.ars`.
+
+---
+
+## 🖱️ Navigation & Mouse Controls
+
+AetherWM blends keyboard-driven tiling efficiency with fluid mouse interaction:
+
+| Action | Control / Gesture |
+| :--- | :--- |
+| **Pan Canvas** | Left-drag on empty desktop **OR** `Super + Middle-drag` anywhere |
+| **Zoom In / Out** | `Super + Scroll Up / Down` |
+| **Move Window** | `Super + Left-drag` on a window *(dragging across workspace boundaries drops it into a new matrix cell)* |
+| **Resize Window** | `Super + Right-drag` on a window |
+| **Focus Window** | Left-click any window |
 
 ---
 
 ## ⚙️ Configuration & Customization Reference
 
-AetherWM reads its configuration from `~/.config/aetherwm/config.asr`. Below is every customizable parameter you can configure:
+AetherWM reads its configuration from `~/.config/aetherwm/config.ars`. 
 
-### Available Configuration Parameters
-
-| Parameter | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `mod_key` | String | `"Mod4"` | Primary modifier key (`"Mod4"` = Super/Windows key, `"Mod1"` = Alt) |
-| `workspaces` | Integer | `4` | Total number of active virtual workspaces |
-| `border_width` | Integer | `2` | Window border thickness in pixels |
-| `gaps` | Integer | `8` | Spacing between tiled windows in pixels |
-| `focused_border_color` | Hex String | `"#58a6ff"` | Border color for the currently active/focused window |
-| `normal_border_color` | Hex String | `"#2b3346"` | Border color for inactive background windows |
-| `bind` | Array/String | *See template* | Custom keybinding rules (`"Modifier + Key", "action"`) |
-
-### Supported Keybinding Actions
-*   `exec <command>` — Launches any shell command or application (e.g., `exec kitty`, `exec rofi -show drun`)
-*   `close` — Closes the currently focused window (`Mod4 + Shift + Q`)
-*   `quit` — Exits the AetherWM session (`Mod4 + Shift + E`)
-*   `workspace <num>` — Switches to the specified virtual workspace (`workspace 1` through `4`)
-
-### Full Sample Configuration (`config.asr`)
+### Full Sample Configuration (`config.ars`)
 ```text
-# AetherWM Full Configuration Reference
-mod_key = "Mod4"
+# AetherWM Configuration Reference
 
-workspaces = 4
+# Core layout & styling parameters
 border_width = 2
-gaps = 8
+outer_gap = 8
+inner_gap = 8
+master_ratio = 0.55
+default_layout = "tiling" # or "floating"
 
-focused_border_color = "#58a6ff"
-normal_border_color = "#2b3346"
+focused_border_color = "0x7aa2f7"
+normal_border_color = "0x2b3346"
+
+# Window Rules (Class-based overrides)
+[[window_rule]]
+selector_key = "class"
+selector_val = "Firefox"
+property = "border_width"
+value = "2"
+
+[[window_rule]]
+selector_key = "class"
+selector_val = "Firefox"
+property = "border_color"
+value = "0x7aa2f7"
+
+# Autostart Applications
+autostart = "picom --config ~/.config/picom/picom.conf"
+autostart = "feh --bg-scale ~/Pictures/wallpaper_hd.png"
+autostart = "dunst"
 
 # Keybindings
-bind = ["Mod4 + Return", "exec kitty"]
-bind = ["Mod4 + Space", "exec rofi -show drun"]
-bind = ["Mod4 + Shift + Q", "close"]
-bind = ["Mod4 + Shift + E", "quit"]
+[[binding]]
+modifiers = ["Mod4"]
+key = "Return"
+action = "exec kitty"
 
-bind = ["Mod4 + 1", "workspace 1"]
-bind = ["Mod4 + 2", "workspace 2"]
-bind = ["Mod4 + 3", "workspace 3"]
-bind = ["Mod4 + 4", "workspace 4"]
+[[binding]]
+modifiers = ["Mod4"]
+key = "space"
+action = "exec rofi -show drun"
+
+[[binding]]
+modifiers = ["Mod4", "Shift"]
+key = "q"
+action = "killclient"
+
+[[binding]]
+modifiers = ["Mod4", "Shift"]
+key = "e"
+action = "quit"
+
+# Spatial Matrix Navigation
+[[binding]]
+modifiers = ["Mod4"]
+key = "Left"
+action = "matrix_left"
+
+[[binding]]
+modifiers = ["Mod4"]
+key = "Right"
+action = "matrix_right"
+
+[[binding]]
+modifiers = ["Mod4"]
+key = "Up"
+action = "matrix_up"
+
+[[binding]]
+modifiers = ["Mod4"]
+key = "Down"
+action = "matrix_down"
+
+# Zoom Controls
+[[binding]]
+modifiers = ["Mod4"]
+key = "equal"
+action = "zoom_in"
+
+[[binding]]
+modifiers = ["Mod4"]
+key = "minus"
+action = "zoom_out"
+
+[[binding]]
+modifiers = ["Mod4"]
+key = "0"
+action = "zoom_reset"
+
+[[binding]]
+modifiers = ["Mod4"]
+key = "o"
+action = "toggleoverview"
