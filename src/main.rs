@@ -1,5 +1,5 @@
 // ==========================================
-// AetherWM - Arch Rice Edition
+// AetherWM - Public Optimised Edition
 // ==========================================
 
 use std::ffi::CStr;
