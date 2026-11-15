@@ -30,6 +30,9 @@ pub struct Config {
     pub master_ratio: f32,
     pub default_layout: String, // e.g., "master_stack" or "monocle"
 
+    // Autostart Applications
+    pub autostart: Vec<String>,
+
     // Collections
     pub bindings: Vec<Binding>,
     pub window_rules: Vec<WindowRule>,
@@ -45,6 +48,7 @@ impl Default for Config {
             outer_gap: 10,
             master_ratio: 0.5,
             default_layout: String::from("master_stack"),
+            autostart: Vec::new(),
             bindings: Vec::new(),
             window_rules: Vec::new(),
         }
@@ -107,6 +111,18 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config, io::Error> {
                     }
                     "default_layout" => {
                         config.default_layout = val.to_string();
+                    }
+                    "autostart" => {
+                        // Clean quotes and brackets if formatted as an array or string
+                        let cleaned = val.trim_matches(|c| c == '[' || c == ']' || c == '"' || c == '\'' || c == ' ');
+                        if !cleaned.is_empty() {
+                            for cmd in cleaned.split(',') {
+                                let cmd_clean = cmd.trim().trim_matches(|c| c == '"' || c == '\'');
+                                if !cmd_clean.is_empty() {
+                                    config.autostart.push(cmd_clean.to_string());
+                                }
+                            }
+                        }
                     }
                     _ => {}
                 }

@@ -50,7 +50,9 @@ unsafe extern "C" {
     fn XGrabKey(display: *mut libc::c_void, keycode: c_int, modifiers: libc::c_uint, grab_window: c_ulong, owner_events: c_int, pointer_mode: c_int, keyboard_mode: c_int) -> c_int;
     fn XUngrabKey(display: *mut libc::c_void, keycode: c_int, modifiers: libc::c_uint, grab_window: c_ulong) -> c_int;
     fn XGrabButton(display: *mut libc::c_void, button: libc::c_uint, modifiers: libc::c_uint, grab_window: c_ulong, owner_events: c_int, event_mask: libc::c_uint, pointer_mode: c_int, keyboard_mode: c_int, confine_to: c_ulong, cursor: c_ulong) -> c_int;
+    #[allow(dead_code)]
     fn XUngrabKeyboard(display: *mut libc::c_void, time: libc::c_ulong) -> c_int;
+    #[allow(dead_code)]
     fn XAllowEvents(display: *mut libc::c_void, event_mode: c_int, time: libc::c_ulong) -> c_int;
     fn XGetClassHint(display: *mut libc::c_void, window: c_ulong, class_hints_return: *mut XClassHint) -> c_int;
     fn XInternAtom(display: *mut libc::c_void, atom_name: *const c_char, only_if_exists: c_int) -> libc::c_ulong;
@@ -81,6 +83,7 @@ const CONFIGURE_REQUEST: i32 = 23;
 const UNMAP_NOTIFY: i32 = 18;
 const DESTROY_NOTIFY: i32 = 17;
 const KEY_PRESS: i32 = 2;
+#[allow(dead_code)]
 const BUTTON_PRESS: i32 = 4;
 
 const LOCK_MASK: libc::c_uint = 1 << 1;
@@ -88,6 +91,7 @@ const MOD2_MASK: libc::c_uint = 1 << 4;
 const GRAB_MODE_ASYNC: libc::c_int = 1;
 const GRAB_MODE_SYNC: libc::c_int = 0;
 const REVERT_TO_POINTER_ROOT: libc::c_int = 1;
+#[allow(dead_code)]
 const REPLAY_POINTER: libc::c_int = 2;
 const ANY_BUTTON: libc::c_uint = 0;
 const ANY_MODIFIER: libc::c_uint = 1 << 15;
@@ -377,6 +381,17 @@ fn main() {
     };
 
     println!("AetherWM starting up...");
+
+    // Execute autostart commands from config once at startup
+    for cmd in &active_config.autostart {
+        if let Err(e) = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(cmd)
+            .spawn()
+        {
+            eprintln!("Failed to run autostart '{}': {}", cmd, e);
+        }
+    }
 
     unsafe {
         let display = XOpenDisplay(ptr::null());
@@ -726,18 +741,19 @@ fn main() {
                                         set_focus(display, &clients, w, &mut focused_window, &active_config);
                                     }
                                 }
+                            } else if binding.action.starts_with("exec ") {
+                                let cmd = binding.action.strip_prefix("exec ").unwrap();
+                                if let Err(e) = std::process::Command::new("sh")
+                                    .arg("-c")
+                                    .arg(cmd)
+                                    .spawn()
+                                {
+                                    eprintln!("Failed to exec '{}': {}", cmd, e);
+                                }
                             }
                             break;
                         }
                     }
-                }
-                BUTTON_PRESS => {
-                    let b = event.xbutton;
-                    let target = if clients.iter().any(|c| c.window == b.window) { b.window } else { b.subwindow };
-                    if clients.iter().any(|c| c.window == target) {
-                        set_focus(display, &clients, target, &mut focused_window, &active_config);
-                    }
-                    XAllowEvents(display, REPLAY_POINTER, b.time);
                 }
                 _ => {}
             }
