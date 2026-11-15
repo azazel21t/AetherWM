@@ -4,136 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AetherWM — Uncompromising Rust X11 Tiling Window Manager</title>
-    <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-        body {
-            background-color: #0f1117;
-            color: #c9d1d9;
-            font-family: monospace, sans-serif;
-            line-height: 1.6;
-            padding: 2rem 1rem;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            min-height: 100vh;
-        }
-        .container {
-            max-width: 850px;
-            width: 100%;
-        }
-        header {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            padding: 3rem 2.5rem;
-            margin-bottom: 2rem;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-        }
-        h1 {
-            color: #58a6ff;
-            font-size: 2.5rem;
-            margin-bottom: 0.5rem;
-            letter-spacing: -1px;
-        }
-        .subtitle {
-            color: #8b949e;
-            font-size: 1.1rem;
-            margin-bottom: 1.5rem;
-        }
-        .badge-container {
-            display: flex;
-            gap: 0.5rem;
-            flex-wrap: wrap;
-            margin-bottom: 1.5rem;
-        }
-        .badge {
-            background: #21262d;
-            border: 1px solid #30363d;
-            color: #7ee787;
-            padding: 0.2rem 0.6rem;
-            border-radius: 4px;
-            font-size: 0.8rem;
-        }
-        .section-title {
-            color: #58a6ff;
-            font-size: 1.4rem;
-            margin: 2rem 0 1rem 0;
-            border-bottom: 1px solid #30363d;
-            padding-bottom: 0.4rem;
-        }
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 1.2rem;
-            margin-bottom: 2rem;
-        }
-        .feature-card {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            padding: 1.5rem;
-            transition: border-color 0.2s;
-        }
-        .feature-card:hover {
-            border-color: #58a6ff;
-        }
-        .feature-card h3 {
-            color: #f0f6fc;
-            margin-bottom: 0.5rem;
-            font-size: 1.1rem;
-        }
-        .feature-card p {
-            color: #8b949e;
-            font-size: 0.9rem;
-        }
-        pre {
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            padding: 1.2rem;
-            overflow-x: auto;
-            color: #7ee787;
-            font-size: 0.9rem;
-            margin: 1.5rem 0;
-        }
-        .btn-container {
-            display: flex;
-            gap: 1rem;
-            margin-top: 1.5rem;
-        }
-        a.btn {
-            background: #238636;
-            color: #ffffff;
-            padding: 0.75rem 1.25rem;
-            border-radius: 6px;
-            text-decoration: none;
-            font-weight: bold;
-            transition: background 0.2s;
-        }
-        a.btn:hover {
-            background: #2ea043;
-        }
-        a.btn-secondary {
-            background: #21262d;
-            border: 1px solid #30363d;
-            color: #c9d1d9;
-        }
-        a.btn-secondary:hover {
-            background: #30363d;
-        }
-        footer {
-            margin-top: 3rem;
-            font-size: 0.85rem;
-            color: #8b949e;
-            text-align: center;
-            border-top: 1px solid #30363d;
-            padding-top: 1.5rem;
-        }
-    </style>
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
@@ -145,13 +16,13 @@
                 <span class="badge">Language: Rust</span>
                 <span class="badge">Protocol: X11</span>
                 <span class="badge">License: GNU GPLv3</span>
-                <span class="badge">Overhead: Near Zero</span>
+                <span class="badge">Performance: Zero Bloat</span>
             </div>
 
             <p>Designed for power users and minimalists who demand absolute resource efficiency without sacrificing system responsiveness, modern layout control, or proper EWMH desktop state compliance.</p>
 
             <div class="btn-container">
-                <a href="https://github.com/azazel21t/AetherWM" class="btn">GitHub Repository</a>
+                <a href="https://github.com/azazel21t/AetherWM" class="btn">View on GitHub</a>
                 <a href="https://github.com/azazel21t/AetherWM/blob/main/LICENSE" class="btn btn-secondary">GPLv3 License</a>
             </div>
         </header>
