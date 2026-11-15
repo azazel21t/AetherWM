@@ -1,13 +1,5 @@
 // ============================================================================
-// AetherWM v2.1 - infinite spatial canvas with continuous zoom
-//
-//  Mouse:
-//    Left-drag on empty desktop ........ pan the canvas
-//    Super + middle-drag ............... pan the canvas (anywhere)
-//    Super + scroll .................... zoom in / out
-//    Super + left-drag on a window ..... move (also drops it into another cell)
-//    Super + right-drag on a window .... resize
-//    Click a window .................... focus it (click is passed to the app)
+// AetherWM v2.3.1 - Infinite Spatial Canvas with Per-Monitor Tiling & Spawning
 // ============================================================================
 
 use std::cell::Cell;
@@ -189,6 +181,7 @@ unsafe extern "C" {
     fn XGrabPointer(display: *mut libc::c_void, grab_window: c_ulong, owner_events: c_int, event_mask: libc::c_uint, pointer_mode: c_int, keyboard_mode: c_int, confine_to: c_ulong, cursor: c_ulong, time: libc::c_ulong) -> c_int;
     fn XUngrabPointer(display: *mut libc::c_void, time: libc::c_ulong) -> c_int;
     fn XAllowEvents(display: *mut libc::c_void, event_mode: c_int, time: libc::c_ulong) -> c_int;
+    fn XQueryPointer(display: *mut libc::c_void, w: c_ulong, root_return: *mut c_ulong, child_return: *mut c_ulong, root_x_return: *mut c_int, root_y_return: *mut c_int, win_x_return: *mut c_int, win_y_return: *mut c_int, mask_return: *mut libc::c_uint) -> c_int;
     fn XGetClassHint(display: *mut libc::c_void, window: c_ulong, class_hints_return: *mut XClassHint) -> c_int;
     fn XGetWMProtocols(display: *mut libc::c_void, w: c_ulong, protocols: *mut *mut c_ulong, count: *mut c_int) -> c_int;
     fn XInternAtom(display: *mut libc::c_void, atom_name: *const c_char, only_if_exists: c_int) -> libc::c_ulong;
@@ -270,13 +263,11 @@ extern "C" fn reap(_: c_int) {
 // ============================================================================
 
 #[derive(Clone, Copy)]
-struct Monitor { x: i32, y: i32, width: i32, height: i32 }
+struct Monitor { x: i32, y: i32, width: i32, height: i32, primary: c_int }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct Point { x: i32, y: i32 }
 
-/// x/y/width/height are in "cell space": position inside the cell at `pos`,
-/// before camera offset and zoom are applied.
 #[derive(Clone)]
 struct Client {
     window: libc::c_ulong,
@@ -290,6 +281,10 @@ struct Client {
     y: i32,
     width: u32,
     height: u32,
+    mux: i32,
+    muy: i32,
+    muw: i32,
+    muh: i32,
 }
 
 #[derive(Copy, Clone)]
@@ -328,7 +323,7 @@ unsafe fn get_monitors(display: *mut libc::c_void, root: libc::c_ulong, screen: 
         for i in 0..nmonitors as usize {
             let m = unsafe { *monitors_ptr.add(i) };
             if m.width > 0 && m.height > 0 {
-                monitors.push(Monitor { x: m.x, y: m.y, width: m.width, height: m.height });
+                monitors.push(Monitor { x: m.x, y: m.y, width: m.width, height: m.height, primary: m.primary });
             }
         }
         unsafe { XRRFreeMonitors(monitors_ptr); }
@@ -337,15 +332,14 @@ unsafe fn get_monitors(display: *mut libc::c_void, root: libc::c_ulong, screen: 
     if monitors.is_empty() {
         let w = unsafe { XDisplayWidth(display, screen) };
         let h = unsafe { XDisplayHeight(display, screen) };
-        monitors.push(Monitor { x: 0, y: 0, width: w, height: h });
+        monitors.push(Monitor { x: 0, y: 0, width: w, height: h, primary: 1 });
     }
     monitors
 }
 
-/// (x, y, w, h) of the area not covered by docks, on the first monitor.
-unsafe fn usable_area(display: *mut libc::c_void, root: libc::c_ulong, screen: c_int, s: &Struts) -> (i32, i32, i32, i32) {
+unsafe fn primary_usable_area(display: *mut libc::c_void, root: libc::c_ulong, screen: c_int, s: &Struts) -> (i32, i32, i32, i32) {
     let monitors = unsafe { get_monitors(display, root, screen) };
-    let mon = monitors.first().copied().unwrap_or(Monitor { x: 0, y: 0, width: 1920, height: 1080 });
+    let mon = monitors.iter().find(|m| m.primary != 0).or_else(|| monitors.first()).copied().unwrap_or(Monitor { x: 0, y: 0, width: 1920, height: 1080, primary: 1 });
     (
         mon.x + s.left,
         mon.y + s.top,
@@ -354,7 +348,38 @@ unsafe fn usable_area(display: *mut libc::c_void, root: libc::c_ulong, screen: c
     )
 }
 
-/// Scale a rectangle around (cx, cy).
+/// Returns the usable area of the monitor where the mouse cursor currently resides.
+unsafe fn monitor_usable_area_under_cursor(display: *mut libc::c_void, root: libc::c_ulong, screen: c_int, s: &Struts) -> (i32, i32, i32, i32) {
+    let monitors = unsafe { get_monitors(display, root, screen) };
+    let mut root_ret = 0;
+    let mut child_ret = 0;
+    let mut rx = 0;
+    let mut ry = 0;
+    let mut wx = 0;
+    let mut wy = 0;
+    let mut mask = 0;
+
+    let cursor_on_monitor = unsafe {
+        XQueryPointer(display, root, &mut root_ret, &mut child_ret, &mut rx, &mut ry, &mut wx, &mut wy, &mut mask) != 0
+    };
+
+    let mon = if cursor_on_monitor {
+        monitors.iter().find(|m| {
+            rx >= m.x && rx < m.x + m.width && ry >= m.y && ry < m.y + m.height
+        }).or_else(|| monitors.iter().find(|m| m.primary != 0)).or_else(|| monitors.first()).copied()
+    } else {
+        None
+    };
+
+    let m = mon.unwrap_or(Monitor { x: 0, y: 0, width: 1920, height: 1080, primary: 1 });
+    (
+        m.x + s.left,
+        m.y + s.top,
+        (m.width - s.left - s.right).max(1),
+        (m.height - s.top - s.bottom).max(1),
+    )
+}
+
 fn zoom_rect(x: i32, y: i32, w: u32, h: u32, z: f32, cx: i32, cy: i32) -> (i32, i32, u32, u32) {
     let sx = cx + ((x - cx) as f32 * z) as i32;
     let sy = cy + ((y - cy) as f32 * z) as i32;
@@ -544,8 +569,6 @@ fn main() {
 
         register_bindings(display, root_window, &active_config, &mut precomputed_bindings);
 
-        // --- Mouse grabs on root: Super + buttons only.
-        // NO plain-button grab on root (that is what used to swallow every click).
         let root_btn_mask = (BUTTON_PRESS_MASK | BUTTON_RELEASE_MASK | POINTER_MOTION_MASK) as libc::c_uint;
         for lock in lock_modifiers {
             for btn in [1u32, 2, 3, 4, 5] {
@@ -554,7 +577,6 @@ fn main() {
             }
         }
 
-        // --- State ---
         let mut clients: Vec<Client> = Vec::new();
         let mut current_view = Point { x: 0, y: 0 };
         let mut cam_offset_x: i32 = 0;
@@ -576,9 +598,8 @@ fn main() {
             let actual_h = h.saturating_sub(2 * bw).max(1);
             XMoveResizeWindow(disp, win, x, y, actual_w, actual_h);
 
-            // ICCCM: tell the client its (synthetic) geometry
             let mut ce = XEvent::new();
-            ce.xconfigure.type_ = 22; // ConfigureNotify
+            ce.xconfigure.type_ = 22;
             ce.xconfigure.display = disp;
             ce.xconfigure.event = win;
             ce.xconfigure.window = win;
@@ -590,9 +611,10 @@ fn main() {
             XSendEvent(disp, win, 0, STRUCTURE_NOTIFY_MASK, &mut ce);
         };
 
-        // Places every client on screen: cell offset + camera pan, then zoom.
+        // Multi-monitor aware viewport application with per-monitor visibility clipping
         let apply_camera_viewport = |disp: *mut libc::c_void, cl_vec: &mut Vec<Client>, cur: Point, off_x: i32, off_y: i32, s: &Struts| {
-            let (ux, uy, uw, uh) = usable_area(disp, root_window, screen, s);
+            let monitors = get_monitors(disp, root_window, screen);
+            let (ux, uy, uw, uh) = primary_usable_area(disp, root_window, screen, s);
             let z = zoom.get();
             let cx = ux + uw / 2;
             let cy = uy + uh / 2;
@@ -604,7 +626,13 @@ fn main() {
                 let (sx, sy, zw, zh) = zoom_rect(c.x + cell_dx + off_x, c.y + cell_dy + off_y, c.width, c.height, z, cx, cy);
                 let (w, h) = (zw as i32, zh as i32);
 
-                let visible = sx + w > ux && sx < ux + uw && sy + h > uy && sy < uy + uh;
+                let visible = monitors.iter().any(|mon| {
+                    let mux = mon.x + s.left;
+                    let muy = mon.y + s.top;
+                    let muw = (mon.width - s.left - s.right).max(1);
+                    let muh = (mon.height - s.top - s.bottom).max(1);
+                    sx + w > mux && sx < mux + muw && sy + h > muy && sy < muy + muh
+                });
 
                 if visible {
                     if !c.mapped {
@@ -625,28 +653,28 @@ fn main() {
             XSync(disp, 0);
         };
 
-        // Master/stack tiling per matrix cell, then apply camera + zoom.
+        // Monitor-aware tile layout
         let tile_layout = |disp: *mut libc::c_void, cl_vec: &mut Vec<Client>, cur: Point, cfg: &config::Config, s: &Struts, off_x: i32, off_y: i32| {
-            let (ux, uy, uw, uh) = usable_area(disp, root_window, screen, s);
             let og = cfg.outer_gap as i32;
             let ig = cfg.inner_gap as i32;
-            let avail_w = uw - og * 2;
-            let avail_h = uh - og * 2;
 
-            let mut groups: HashMap<Point, Vec<usize>> = HashMap::new();
+            let mut groups: HashMap<(i32, i32, i32, i32), Vec<usize>> = HashMap::new();
             for (i, c) in cl_vec.iter().enumerate() {
-                if !c.floating {
-                    groups.entry(c.pos).or_default().push(i);
+                if !c.floating && c.pos == cur {
+                    groups.entry((c.mux, c.muy, c.muw, c.muh)).or_default().push(i);
                 }
             }
 
-            for idxs in groups.values() {
+            for ((mux, muy, muw, muh), idxs) in groups {
                 let count = idxs.len();
                 if count == 0 { continue; }
+                let avail_w = muw - og * 2;
+                let avail_h = muh - og * 2;
+
                 if count == 1 {
                     let c = &mut cl_vec[idxs[0]];
-                    c.x = ux + og;
-                    c.y = uy + og;
+                    c.x = mux + og;
+                    c.y = muy + og;
                     c.width = avail_w.max(1) as u32;
                     c.height = avail_h.max(1) as u32;
                 } else {
@@ -654,19 +682,19 @@ fn main() {
                     let stack_w = avail_w - master_w - ig;
                     let n = (count - 1) as i32;
                     let single_h = ((avail_h - ig * (n - 1)) / n).max(1);
-                    let stack_x = ux + og + master_w + ig;
+                    let stack_x = mux + og + master_w + ig;
 
                     {
                         let m = &mut cl_vec[idxs[0]];
-                        m.x = ux + og;
-                        m.y = uy + og;
+                        m.x = mux + og;
+                        m.y = muy + og;
                         m.width = master_w.max(1) as u32;
                         m.height = avail_h.max(1) as u32;
                     }
                     for (k, &i) in idxs.iter().skip(1).enumerate() {
                         let sc = &mut cl_vec[i];
                         sc.x = stack_x;
-                        sc.y = uy + og + (k as i32 * (single_h + ig));
+                        sc.y = muy + og + (k as i32 * (single_h + ig));
                         sc.width = stack_w.max(1) as u32;
                         sc.height = single_h as u32;
                     }
@@ -675,7 +703,6 @@ fn main() {
             apply_camera_viewport(disp, cl_vec, cur, off_x, off_y, s);
         };
 
-        // Focus the topmost mapped client of the current cell (or nothing).
         let refocus = |cl: &Vec<Client>, view: Point, foc: &mut libc::c_ulong, cfg: &config::Config| {
             let next = cl.iter().rev().find(|c| c.pos == view && c.mapped).map(|c| c.window).unwrap_or(0);
             set_focus(display, cl, next, foc, cfg, root_window, &atoms);
@@ -693,7 +720,6 @@ fn main() {
                     let win = event.xmaprequest.window;
                     if clients.iter().any(|c| c.window == win) { continue; }
 
-                    // Docks / bars: map them, read struts, don't manage.
                     let mut actual_type = 0;
                     let mut actual_format = 0;
                     let mut nitems = 0;
@@ -749,6 +775,8 @@ fn main() {
                     cam_offset_x = 0;
                     cam_offset_y = 0;
 
+                    let (mux, muy, muw, muh) = monitor_usable_area_under_cursor(display, root_window, screen, &struts);
+
                     clients.push(Client {
                         window: win,
                         pos: current_view,
@@ -757,13 +785,19 @@ fn main() {
                         ignore_unmaps: 0,
                         border_color: win_border_color,
                         border_width: win_border_width,
-                        x: 120, y: 120, width: 960, height: 640,
+                        x: mux + 120, 
+                        y: muy + 120, 
+                        width: ((muw / 2).max(400)) as u32, 
+                        height: ((muh / 2).max(300)) as u32,
+                        mux,
+                        muy,
+                        muw,
+                        muh,
                     });
 
                     tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);
                     XSync(display, 0);
 
-                    // SYNC grab: the press is frozen until we replay it to the app
                     XGrabButton(display, ANY_BUTTON, ANY_MODIFIER, win, 0, BUTTON_PRESS_MASK as libc::c_uint,
                         GRAB_MODE_SYNC, GRAB_MODE_ASYNC, 0, 0);
                     set_focus(display, &clients, win, &mut focused_window, &active_config, root_window, &atoms);
@@ -785,7 +819,6 @@ fn main() {
                             apply_camera_viewport(display, &mut clients, current_view, cam_offset_x, cam_offset_y, &struts);
                         }
                         Some(_) => {
-                            // Tiled: ignore the request, re-assert our geometry
                             tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);
                         }
                         None => {
@@ -805,7 +838,6 @@ fn main() {
                     if drag.is_some() {
                         // ignore presses mid-drag
                     } else if sup && (ev.button == 4 || ev.button == 5) {
-                        // Super + scroll: zoom
                         let z = zoom.get();
                         let nz = if ev.button == 4 { z * 1.15 } else { z / 1.15 };
                         zoom.set(nz.clamp(MIN_ZOOM, MAX_ZOOM));
@@ -813,7 +845,6 @@ fn main() {
                     } else if (sup && ev.button == 2)
                         || (ev.window == root_window && !on_client && ev.button == 1 && pure_state == 0)
                     {
-                        // Super+middle anywhere, or plain left on empty desktop: pan
                         if grab_ptr(ev.time) {
                             drag = Some(Drag::Pan { sx: ev.x_root, sy: ev.y_root, off_x: cam_offset_x, off_y: cam_offset_y });
                         }
@@ -831,8 +862,6 @@ fn main() {
                         }
                     }
 
-                    // Unfreeze the pointer and hand the click to the app.
-                    // Must happen for EVERY press that came through a client grab.
                     if from_client_grab {
                         XAllowEvents(display, REPLAY_POINTER, ev.time);
                     }
@@ -849,8 +878,7 @@ fn main() {
                             apply_camera_viewport(display, &mut clients, current_view, cam_offset_x, cam_offset_y, &struts);
                         }
                         Some(Drag::Move { win, sx, sy, ox, oy }) => {
-                            let (ux, uy, uw, uh) = usable_area(display, root_window, screen, &struts);
-                            let _ = (ux, uy);
+                            let (_, _, uw, uh) = primary_usable_area(display, root_window, screen, &struts);
                             if let Some(c) = clients.iter_mut().find(|c| c.window == win) {
                                 c.x = ox + ((m.x_root - sx) as f32 / z) as i32;
                                 c.y = oy + ((m.y_root - sy) as f32 / z) as i32;
@@ -861,7 +889,7 @@ fn main() {
                             }
                         }
                         Some(Drag::Resize { win, sx, sy, ow, oh }) => {
-                            let (_, _, uw, uh) = usable_area(display, root_window, screen, &struts);
+                            let (_, _, uw, uh) = primary_usable_area(display, root_window, screen, &struts);
                             if let Some(c) = clients.iter_mut().find(|c| c.window == win) {
                                 c.width  = (ow + ((m.x_root - sx) as f32 / z) as i32).max(120) as u32;
                                 c.height = (oh + ((m.y_root - sy) as f32 / z) as i32).max(80) as u32;
@@ -878,11 +906,10 @@ fn main() {
                 BUTTON_RELEASE => {
                     if let Some(d) = drag.take() {
                         XUngrabPointer(display, 0);
-                        let (ux, _uy, uw, uh) = usable_area(display, root_window, screen, &struts);
+                        let (ux, _uy, uw, uh) = primary_usable_area(display, root_window, screen, &struts);
 
                         match d {
                             Drag::Pan { .. } => {
-                                // Snap to a new matrix cell if panned past the halfway point
                                 let sx = (-cam_offset_x as f32 / uw as f32).round() as i32;
                                 let sy = (-cam_offset_y as f32 / uh as f32).round() as i32;
                                 if sx != 0 || sy != 0 {
@@ -899,8 +926,7 @@ fn main() {
                             }
                             Drag::Move { win, .. } => {
                                 if let Some(i) = clients.iter().position(|c| c.window == win) {
-                                    // Drop the window into whichever cell its center landed in
-                                    let (_, uy, _, _) = usable_area(display, root_window, screen, &struts);
+                                    let (_, uy, _, _) = primary_usable_area(display, root_window, screen, &struts);
                                     let c = &mut clients[i];
                                     let lx = c.x + (c.pos.x - current_view.x) * uw;
                                     let ly = c.y + (c.pos.y - current_view.y) * uh;
@@ -992,7 +1018,7 @@ fn main() {
                                 if focused_window != 0 {
                                     if supports_delete(display, focused_window, atoms.wm_delete_window) {
                                         let mut cm = XEvent::new();
-                                        cm.type_ = 33; // ClientMessage
+                                        cm.type_ = 33;
                                         cm.xclient.window = focused_window;
                                         cm.xclient.message_type = atoms.wm_protocols;
                                         cm.xclient.format = 32;
@@ -1015,7 +1041,7 @@ fn main() {
                                     "zoom_out" => z / 1.25,
                                     "zoom_in" => z * 1.25,
                                     "zoom_reset" => 1.0,
-                                    _ => if z < 1.0 { 1.0 } else { 0.4 }, // toggleoverview
+                                    _ => if z < 1.0 { 1.0 } else { 0.4 },
                                 };
                                 zoom.set(nz.clamp(MIN_ZOOM, MAX_ZOOM));
                                 tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);

@@ -1,15 +1,94 @@
-# AetherWM Default Configuration
-# Location: ~/.config/aetherwm/config.asr
+# ============================================================================
+# AetherWM - Comprehensive Master Configuration Template
+# Location: ~/.config/aetherwm/config.ars
+# ============================================================================
 
-# Modifier key: "Mod4" = Super/Windows key, "Mod1" = Alt
-mod_key = "Mod4"
+# ----------------------------------------------------------------------------
+# 1. VISUALS & GAPS
+# ----------------------------------------------------------------------------
 
-# Application Keybindings
-bind = ["Mod4 + Return", "exec kitty"]
-bind = ["Mod4 + Space", "exec rofi -show drun"]
-bind = ["Mod4 + Shift + Q", "close"]
-bind = ["Mod4 + Shift + E", "quit"]
-
-# Tiling & Workspace Defaults
-workspaces = 4
+# Border width of managed windows in pixels
 border_width = 2
+
+# Unfocused window border color (Hex format)
+border_color = 0x1f2335
+
+# Active/focused window border color (Tokyo Night blue accent by default)
+focused_border_color = 0x7aa2f7
+
+# Spacing between tiled windows in a cell
+inner_gap = 10
+
+# Margin spacing around the outer edges of the screen
+outer_gap = 14
+
+# Master-to-stack split ratio (0.50 means a 50/50 split)
+master_ratio = 0.50
+
+# Default layout mode: "master_stack" or "floating"
+default_layout = "master_stack"
+
+
+# ----------------------------------------------------------------------------
+# 2. AUTOSTART COMMANDS
+# ----------------------------------------------------------------------------
+# Commands executed in the background when AetherWM boots up.
+# Perfect for wallpapers (feh), compositors (picom), or status bars.
+
+autostart = "feh --bg-scale ~/.wallpaper.jpg &"
+autostart = "picom --config ~/.config/picom/picom.conf &"
+
+
+# ----------------------------------------------------------------------------
+# 3. KEYBINDINGS TUTORIAL
+# ----------------------------------------------------------------------------
+# Syntax: bind <Modifiers> + <Key> -> <Action>
+# Available Modifiers: Mod4 (Super/Windows key), Mod1 (Alt), Shift, Control/Ctrl
+#
+# Available Actions:
+#   - killclient      : Close the currently focused application window
+#   - reload_config   : Hot-reload this configuration file without restarting WM
+#   - togglefloating  : Switch the focused window between tiled and floating layouts
+#   - toggleoverview  : Zoom out to view the spatial canvas layout
+#   - zoom_in         : Scale the continuous canvas zoom in
+#   - zoom_out        : Scale the continuous canvas zoom out
+#   - zoom_reset      : Reset continuous zoom back to 100% (1.0)
+#   - matrix_left     : Pan camera viewport one cell to the left
+#   - matrix_right    : Pan camera viewport one cell to the right
+#   - matrix_up       : Pan camera viewport one cell up
+#   - matrix_down     : Pan camera viewport one cell down
+#   - exec <command>  : Launch any shell command or program
+
+# --- Application Launchers ---
+bind Mod4 + Return -> exec kitty
+bind Mod4 + d      -> exec rofi -show drun
+
+# --- Window & Session Management ---
+bind Mod4 + q             -> killclient
+bind Mod4 + r             -> reload_config
+bind Mod4 + Shift + space -> togglefloating
+
+# --- Infinite Canvas & Spatial Matrix Controls ---
+bind Mod4 + p     -> toggleoverview
+bind Mod4 + minus -> zoom_out
+bind Mod4 + equal -> zoom_in
+bind Mod4 + 0     -> zoom_reset
+
+# --- Viewport Navigation ---
+bind Mod4 + h -> matrix_left
+bind Mod4 + l -> matrix_right
+bind Mod4 + k -> matrix_up
+bind Mod4 + j -> matrix_down
+
+
+# ----------------------------------------------------------------------------
+# 4. WINDOW RULES TUTORIAL
+# ----------------------------------------------------------------------------
+# Syntax: rule <selector_key>: "<selector_val>" -> <property> = <value>
+# Supported selectors: class (Window class name from XClassHint)
+# Supported properties: border_color, border_width
+#
+# Examples: Give specific apps custom styling or borders automatically.
+
+rule class: "Kitty"   -> border_color = 0x7aa2f7
+rule class: "Firefox" -> border_width = 3
