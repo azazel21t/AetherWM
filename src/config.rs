@@ -42,10 +42,10 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             border_width: 2,
-            border_color: 0x2a2e38,
-            focused_border_color: 0x61afef,
+            border_color: 0x1f2335,
+            focused_border_color: 0x7aa2f7,
             inner_gap: 10,
-            outer_gap: 10,
+            outer_gap: 14,
             master_ratio: 0.5,
             default_layout: String::from("master_stack"),
             autostart: Vec::new(),
@@ -65,14 +65,26 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config, io::Error> {
         let line = line?;
         let trimmed = line.trim();
 
-        // Skip comments and empty lines
+        // Skip empty lines and full-line comments
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
 
+        // Strip inline comments (e.g., "reload_config # comment" -> "reload_config")
+        let clean_line = if let Some(idx) = trimmed.find('#') {
+            &trimmed[..idx]
+        } else {
+            trimmed
+        }
+        .trim();
+
+        if clean_line.is_empty() {
+            continue;
+        }
+
         // Parse global properties (e.g., border_width = 2, master_ratio = 0.55, inner_gap = 12)
-        if trimmed.contains('=') && !trimmed.starts_with("bind ") && !trimmed.starts_with("windowrule ") {
-            if let Some((key_part, val_part)) = trimmed.split_once('=') {
+        if clean_line.contains('=') && !clean_line.starts_with("bind ") && !clean_line.starts_with("windowrule ") {
+            if let Some((key_part, val_part)) = clean_line.split_once('=') {
                 let key = key_part.trim();
                 let val = val_part.trim();
 
@@ -113,7 +125,6 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config, io::Error> {
                         config.default_layout = val.to_string();
                     }
                     "autostart" => {
-                        // Clean quotes and brackets if formatted as an array or string
                         let cleaned = val.trim_matches(|c| c == '[' || c == ']' || c == '"' || c == '\'' || c == ' ');
                         if !cleaned.is_empty() {
                             for cmd in cleaned.split(',') {
@@ -128,9 +139,9 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config, io::Error> {
                 }
             }
         }
-        // Parse keybindings: bind Mod1 + Return -> exec kitty
-        else if trimmed.starts_with("bind ") {
-            let rest = trimmed.strip_prefix("bind ").unwrap().trim();
+        // Parse keybindings: bind Mod4 + r -> reload_config
+        else if clean_line.starts_with("bind ") {
+            let rest = clean_line.strip_prefix("bind ").unwrap().trim();
             if let Some((chord_part, action_part)) = rest.split_once("->") {
                 let action = action_part.trim().to_string();
                 let tokens: Vec<&str> = chord_part.split('+').map(|s| s.trim()).collect();
@@ -150,9 +161,9 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> Result<Config, io::Error> {
                 }
             }
         }
-        // Parse window rules: windowrule class = xterm, border_width = 3
-        else if trimmed.starts_with("windowrule ") {
-            let rest = trimmed.strip_prefix("windowrule ").unwrap().trim();
+        // Parse window rules: windowrule class = kitty, border_width = 4
+        else if clean_line.starts_with("windowrule ") {
+            let rest = clean_line.strip_prefix("windowrule ").unwrap().trim();
             let parts: Vec<&str> = rest.split(',').map(|s| s.trim()).collect();
             if parts.len() == 2 {
                 let selector_tokens: Vec<&str> = parts[0].split('=').map(|s| s.trim()).collect();
