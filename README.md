@@ -64,95 +64,97 @@ AetherWM reads its configuration from `~/.config/aetherwm/config.ars`.
 
 ### Full Sample Configuration (`config.ars`)
 ```text
-# AetherWM Configuration Reference
+# ============================================================================
+# AetherWM - Comprehensive Master Configuration Template
+# Location: ~/.config/aetherwm/config.ars
+# ============================================================================
 
-# Core layout & styling parameters
+# ----------------------------------------------------------------------------
+# 1. VISUALS & GAPS
+# ----------------------------------------------------------------------------
+
+# Border width of managed windows in pixels
 border_width = 2
-outer_gap = 8
-inner_gap = 8
-master_ratio = 0.55
-default_layout = "tiling" # or "floating"
 
-focused_border_color = "0x7aa2f7"
-normal_border_color = "0x2b3346"
+# Unfocused window border color (Hex format)
+border_color = 0x1f2335
 
-# Window Rules (Class-based overrides)
-[[window_rule]]
-selector_key = "class"
-selector_val = "Firefox"
-property = "border_width"
-value = "2"
+# Active/focused window border color (Tokyo Night blue accent by default)
+focused_border_color = 0x7aa2f7
 
-[[window_rule]]
-selector_key = "class"
-selector_val = "Firefox"
-property = "border_color"
-value = "0x7aa2f7"
+# Spacing between tiled windows in a cell
+inner_gap = 10
 
-# Autostart Applications
-autostart = "picom --config ~/.config/picom/picom.conf"
-autostart = "feh --bg-scale ~/Pictures/wallpaper_hd.png"
-autostart = "dunst"
+# Margin spacing around the outer edges of the screen
+outer_gap = 14
 
-# Keybindings
-[[binding]]
-modifiers = ["Mod4"]
-key = "Return"
-action = "exec kitty"
+# Master-to-stack split ratio (0.50 means a 50/50 split)
+master_ratio = 0.50
 
-[[binding]]
-modifiers = ["Mod4"]
-key = "space"
-action = "exec rofi -show drun"
+# Default layout mode: "master_stack" or "floating"
+default_layout = "master_stack"
 
-[[binding]]
-modifiers = ["Mod4", "Shift"]
-key = "q"
-action = "killclient"
 
-[[binding]]
-modifiers = ["Mod4", "Shift"]
-key = "e"
-action = "quit"
+# ----------------------------------------------------------------------------
+# 2. AUTOSTART COMMANDS
+# ----------------------------------------------------------------------------
+# Commands executed in the background when AetherWM boots up.
+# Perfect for wallpapers (feh), compositors (picom), or status bars.
 
-# Spatial Matrix Navigation
-[[binding]]
-modifiers = ["Mod4"]
-key = "Left"
-action = "matrix_left"
+autostart = "feh --bg-scale ~/.wallpaper.jpg &"
+autostart = "picom --config ~/.config/picom/picom.conf &"
 
-[[binding]]
-modifiers = ["Mod4"]
-key = "Right"
-action = "matrix_right"
 
-[[binding]]
-modifiers = ["Mod4"]
-key = "Up"
-action = "matrix_up"
+# ----------------------------------------------------------------------------
+# 3. KEYBINDINGS TUTORIAL
+# ----------------------------------------------------------------------------
+# Syntax: bind <Modifiers> + <Key> -> <Action>
+# Available Modifiers: Mod4 (Super/Windows key), Mod1 (Alt), Shift, Control/Ctrl
+#
+# Available Actions:
+#   - killclient      : Close the currently focused application window
+#   - reload_config   : Hot-reload this configuration file without restarting WM
+#   - togglefloating  : Switch the focused window between tiled and floating layouts
+#   - toggleoverview  : Zoom out to view the spatial canvas layout
+#   - zoom_in         : Scale the continuous canvas zoom in
+#   - zoom_out        : Scale the continuous canvas zoom out
+#   - zoom_reset      : Reset continuous zoom back to 100% (1.0)
+#   - matrix_left     : Pan camera viewport one cell to the left
+#   - matrix_right    : Pan camera viewport one cell to the right
+#   - matrix_up       : Pan camera viewport one cell up
+#   - matrix_down     : Pan camera viewport one cell down
+#   - exec <command>  : Launch any shell command or program
 
-[[binding]]
-modifiers = ["Mod4"]
-key = "Down"
-action = "matrix_down"
+# --- Application Launchers ---
+bind Mod4 + Return -> exec kitty
+bind Mod4 + d      -> exec rofi -show drun
 
-# Zoom Controls
-[[binding]]
-modifiers = ["Mod4"]
-key = "equal"
-action = "zoom_in"
+# --- Window & Session Management ---
+bind Mod4 + q             -> killclient
+bind Mod4 + r             -> reload_config
+bind Mod4 + Shift + space -> togglefloating
 
-[[binding]]
-modifiers = ["Mod4"]
-key = "minus"
-action = "zoom_out"
+# --- Infinite Canvas & Spatial Matrix Controls ---
+bind Mod4 + p     -> toggleoverview
+bind Mod4 + minus -> zoom_out
+bind Mod4 + equal -> zoom_in
+bind Mod4 + 0     -> zoom_reset
 
-[[binding]]
-modifiers = ["Mod4"]
-key = "0"
-action = "zoom_reset"
+# --- Viewport Navigation ---
+bind Mod4 + h -> matrix_left
+bind Mod4 + l -> matrix_right
+bind Mod4 + k -> matrix_up
+bind Mod4 + j -> matrix_down
 
-[[binding]]
-modifiers = ["Mod4"]
-key = "o"
-action = "toggleoverview"
+
+# ----------------------------------------------------------------------------
+# 4. WINDOW RULES TUTORIAL
+# ----------------------------------------------------------------------------
+# Syntax: rule <selector_key>: "<selector_val>" -> <property> = <value>
+# Supported selectors: class (Window class name from XClassHint)
+# Supported properties: border_color, border_width
+#
+# Examples: Give specific apps custom styling or borders automatically.
+
+rule class: "Kitty"   -> border_color = 0x7aa2f7
+rule class: "Firefox" -> border_width = 3
