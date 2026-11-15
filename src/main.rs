@@ -52,7 +52,6 @@ unsafe extern "C" {
     fn XGrabButton(display: *mut libc::c_void, button: libc::c_uint, modifiers: libc::c_uint, grab_window: c_ulong, owner_events: c_int, event_mask: libc::c_uint, pointer_mode: c_int, keyboard_mode: c_int, confine_to: c_ulong, cursor: c_ulong) -> c_int;
     #[allow(dead_code)]
     fn XUngrabKeyboard(display: *mut libc::c_void, time: libc::c_ulong) -> c_int;
-    #[allow(dead_code)]
     fn XAllowEvents(display: *mut libc::c_void, event_mode: c_int, time: libc::c_ulong) -> c_int;
     fn XGetClassHint(display: *mut libc::c_void, window: c_ulong, class_hints_return: *mut XClassHint) -> c_int;
     fn XInternAtom(display: *mut libc::c_void, atom_name: *const c_char, only_if_exists: c_int) -> libc::c_ulong;
@@ -83,7 +82,6 @@ const CONFIGURE_REQUEST: i32 = 23;
 const UNMAP_NOTIFY: i32 = 18;
 const DESTROY_NOTIFY: i32 = 17;
 const KEY_PRESS: i32 = 2;
-#[allow(dead_code)]
 const BUTTON_PRESS: i32 = 4;
 
 const LOCK_MASK: libc::c_uint = 1 << 1;
@@ -91,7 +89,6 @@ const MOD2_MASK: libc::c_uint = 1 << 4;
 const GRAB_MODE_ASYNC: libc::c_int = 1;
 const GRAB_MODE_SYNC: libc::c_int = 0;
 const REVERT_TO_POINTER_ROOT: libc::c_int = 1;
-#[allow(dead_code)]
 const REPLAY_POINTER: libc::c_int = 2;
 const ANY_BUTTON: libc::c_uint = 0;
 const ANY_MODIFIER: libc::c_uint = 1 << 15;
@@ -421,7 +418,7 @@ fn main() {
 
         XSetErrorHandler(Some(runtime_err));
 
-        // --- EWMH Supporting Window Initialization (Fastfetch Fix) ---
+        // --- EWMH Supporting Window Initialization ---
         let supporting_window = XCreateSimpleWindow(display, root_window, 0, 0, 1, 1, 0, 0, 0);
         let atom_net_supporting_wm_check = XInternAtom(display, b"_NET_SUPPORTING_WM_CHECK\0".as_ptr() as *const c_char, 0);
         let atom_net_wm_name = XInternAtom(display, b"_NET_WM_NAME\0".as_ptr() as *const c_char, 0);
@@ -604,6 +601,7 @@ fn main() {
                     tile_layout(display, &mut clients, current_tag, screen_width, screen_height, &active_config);
                     XMapWindow(display, win);
 
+                    // Grab button with GRAB_MODE_SYNC so clicks can focus and be replayed cleanly
                     XGrabButton(
                         display, ANY_BUTTON, ANY_MODIFIER, win, 0,
                         BUTTON_PRESS_MASK as libc::c_uint, GRAB_MODE_SYNC, GRAB_MODE_ASYNC, 0, 0,
@@ -646,6 +644,15 @@ fn main() {
                             tile_layout(display, &mut clients, current_tag, screen_width, screen_height, &active_config);
                         }
                     }
+                }
+                BUTTON_PRESS => {
+                    let win = event.xbutton.window;
+                    if let Some(c) = clients.iter().find(|c| c.window == win) {
+                        let w = c.window;
+                        set_focus(display, &clients, w, &mut focused_window, &active_config);
+                    }
+                    // Replay the pointer event so applications receive the click after focus
+                    XAllowEvents(display, REPLAY_POINTER, event.xbutton.time);
                 }
                 KEY_PRESS => {
                     let keycode = event.xkey.keycode as libc::c_uchar;
