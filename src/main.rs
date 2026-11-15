@@ -340,11 +340,13 @@ unsafe fn set_focus(
                 XSetWindowBorder(display, old.window, old.border_color);
             }
         }
-        XSetWindowBorder(display, win, cfg.focused_border_color);
-        XSetInputFocus(display, win, REVERT_TO_POINTER_ROOT, 0);
-        XRaiseWindow(display, win);
+        if let Some(_c) = clients.iter().find(|c| c.window == win) {
+            XSetWindowBorder(display, win, cfg.focused_border_color);
+            XSetInputFocus(display, win, REVERT_TO_POINTER_ROOT, 0);
+            XRaiseWindow(display, win);
+            *focused = win;
+        }
     }
-    *focused = win;
 }
 
 fn parse_modifier(name: &str) -> libc::c_uint {
@@ -561,7 +563,6 @@ fn main() {
 
                     XSelectInput(display, win, CLIENT_EVENT_MASK);
 
-                    let mut win_border_width = active_config.border_width;
                     let mut win_border_color = active_config.border_color;
                     let mut class_hint = XClassHint { res_name: ptr::null_mut(), res_class: ptr::null_mut() };
 
@@ -571,9 +572,7 @@ fn main() {
                                 let class_name = c_str.to_string();
                                 for rule in &active_config.window_rules {
                                     if rule.selector_key == "class" && rule.selector_val == class_name {
-                                        if rule.property == "border_width" {
-                                            if let Ok(val) = rule.value.parse::<u32>() { win_border_width = val; }
-                                        } else if rule.property == "border_color" {
+                                        if rule.property == "border_color" {
                                             let clean_val = rule.value.strip_prefix("0x").unwrap_or(&rule.value);
                                             if let Ok(val) = u64::from_str_radix(clean_val, 16) { win_border_color = val; }
                                         }
@@ -585,7 +584,7 @@ fn main() {
                         if !class_hint.res_class.is_null() { XFree(class_hint.res_class as *mut libc::c_void); }
                     }
 
-                    XSetWindowBorderWidth(display, win, win_border_width);
+                    XSetWindowBorderWidth(display, win, active_config.border_width);
                     XSetWindowBorder(display, win, win_border_color);
 
                     clients.push(Client {
@@ -601,7 +600,6 @@ fn main() {
                     tile_layout(display, &mut clients, current_tag, screen_width, screen_height, &active_config);
                     XMapWindow(display, win);
 
-                    // Grab button with GRAB_MODE_SYNC so clicks can focus and be replayed cleanly
                     XGrabButton(
                         display, ANY_BUTTON, ANY_MODIFIER, win, 0,
                         BUTTON_PRESS_MASK as libc::c_uint, GRAB_MODE_SYNC, GRAB_MODE_ASYNC, 0, 0,
@@ -651,7 +649,6 @@ fn main() {
                         let w = c.window;
                         set_focus(display, &clients, w, &mut focused_window, &active_config);
                     }
-                    // Replay the pointer event so applications receive the click after focus
                     XAllowEvents(display, REPLAY_POINTER, event.xbutton.time);
                 }
                 KEY_PRESS => {
@@ -715,7 +712,7 @@ fn main() {
                                             if c.window == focused_window {
                                                 XSetWindowBorder(display, c.window, active_config.focused_border_color);
                                             } else {
-                                                XSetWindowBorder(display, c.window, active_config.border_color);
+                                                XSetWindowBorder(display, c.window, c.border_color);
                                             }
                                         }
 
