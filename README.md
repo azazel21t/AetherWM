@@ -28,7 +28,7 @@ Written entirely in **Rust** and interfacing directly with X11 and Xrandr, Aethe
 | :--- | :--- |
 | **Active RAM Footprint** | **~2.2 MiB** during multi-window tiling workflows |
 | **Primary Test Rig** | HP Laptop 14s-fq0xxx (AMD 3020e, Radeon Vega 3 Integrated Graphics) + External Display |
-| **Operating System** | Arch Linux |
+| **Operating System** | Most Linux Distros |
 | **Display Server** | X11 / Xrandr |
 | **Display Support** | **Multi-monitor dynamic clipping & per-monitor tiling** (Mixed resolutions supported) |
 
