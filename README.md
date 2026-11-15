@@ -32,6 +32,7 @@ Unlike bloated desktop stacks that consume gigabytes of background resources, Ae
 | **Primary Test Rig** | HP Laptop 14s-fq0xxx (AMD 3020e, Radeon Vega 3 Integrated Graphics) |
 | **Operating System** | Arch Linux |
 | **Display Server** | X11 |
+| **Display Support** | **Single-display setups only** *(Multi-monitor configurations have NOT been tested yet!)* |
 
 ---
 
@@ -44,23 +45,47 @@ Unlike bloated desktop stacks that consume gigabytes of background resources, Ae
 
 ---
 
-## 🧬 Built to Be Forked & Extended
+## ⚙️ Configuration & Customization Reference
 
-AetherWM wasn't just built to be used—it was built to be **hacked**. Born out of pure evening boredom and a refusal to accept software bloat, the codebase is intentionally clean, modular, and transparent.
+AetherWM reads its configuration from `~/.config/aetherwm/config.asr`. Below is every customizable parameter you can configure:
 
-If you want to experiment with custom layout algorithms, tweak event loop dispatching, or build your own bespoke tiling system from a reliable base:
-1. Fork the repo: [`azazel21t/AetherWM`](https://github.com/azazel21t/AetherWM/fork)
-2. Dive into the core event handlers in `src/`.
-3. Build your custom logic on top of a rock-solid, memory-safe Rust foundation.
+### Available Configuration Parameters
 
----
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `mod_key` | String | `"Mod4"` | Primary modifier key (`"Mod4"` = Super/Windows key, `"Mod1"` = Alt) |
+| `workspaces` | Integer | `4` | Total number of active virtual workspaces |
+| `border_width` | Integer | `2` | Window border thickness in pixels |
+| `gaps` | Integer | `8` | Spacing between tiled windows in pixels |
+| `focused_border_color` | Hex String | `"#58a6ff"` | Border color for the currently active/focused window |
+| `normal_border_color` | Hex String | `"#2b3346"` | Border color for inactive background windows |
+| `bind` | Array/String | *See template* | Custom keybinding rules (`"Modifier + Key", "action"`) |
 
-## 🚀 Quick Start & Installation
+### Supported Keybinding Actions
+*   `exec <command>` — Launches any shell command or application (e.g., `exec kitty`, `exec rofi -show drun`)
+*   `close` — Closes the currently focused window (`Mod4 + Shift + Q`)
+*   `quit` — Exits the AetherWM session (`Mod4 + Shift + E`)
+*   `workspace <num>` — Switches to the specified virtual workspace (`workspace 1` through `4`)
 
-### Prerequisites
-Make sure you have Rust installed along with basic X11 development headers.
+### Full Sample Configuration (`config.asr`)
+```text
+# AetherWM Full Configuration Reference
+mod_key = "Mod4"
 
-### 1. Clone the Repository
-```bash
-git clone [https://github.com/azazel21t/AetherWM.git](https://github.com/azazel21t/AetherWM.git)
-cd AetherWM
+workspaces = 4
+border_width = 2
+gaps = 8
+
+focused_border_color = "#58a6ff"
+normal_border_color = "#2b3346"
+
+# Keybindings
+bind = ["Mod4 + Return", "exec kitty"]
+bind = ["Mod4 + Space", "exec rofi -show drun"]
+bind = ["Mod4 + Shift + Q", "close"]
+bind = ["Mod4 + Shift + E", "quit"]
+
+bind = ["Mod4 + 1", "workspace 1"]
+bind = ["Mod4 + 2", "workspace 2"]
+bind = ["Mod4 + 3", "workspace 3"]
+bind = ["Mod4 + 4", "workspace 4"]

@@ -1,0 +1,15 @@
+# AetherWM Default Configuration
+# Location: ~/.config/aetherwm/config.asr
+
+# Modifier key: "Mod4" = Super/Windows key, "Mod1" = Alt
+mod_key = "Mod4"
+
+# Application Keybindings
+bind = ["Mod4 + Return", "exec kitty"]
+bind = ["Mod4 + Space", "exec rofi -show drun"]
+bind = ["Mod4 + Shift + Q", "close"]
+bind = ["Mod4 + Shift + E", "quit"]
+
+# Tiling & Workspace Defaults
+workspaces = 4
+border_width = 2
