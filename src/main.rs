@@ -2,7 +2,7 @@
 // AetherWM v2.3.1 - Infinite Spatial Canvas with Per-Monitor Tiling & Spawning
 // ============================================================================
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::os::raw::{c_char, c_int, c_ulong};
@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+mod comp_config;
+mod compositor;
 mod config;
 
 // ============================================================================
@@ -17,11 +19,12 @@ mod config;
 // ============================================================================
 
 #[allow(non_camel_case_types)]
-type XErrorHandler = Option<unsafe extern "C" fn(*mut libc::c_void, *mut XErrorEvent) -> libc::c_int>;
+pub(crate) type XErrorHandler =
+    Option<unsafe extern "C" fn(*mut libc::c_void, *mut XErrorEvent) -> libc::c_int>;
 
 #[allow(dead_code)]
 #[repr(C)]
-struct XErrorEvent {
+pub(crate) struct XErrorEvent {
     type_: libc::c_int,
     display: *mut libc::c_void,
     resourceid: libc::c_ulong,
@@ -68,57 +71,193 @@ struct XWindowChanges {
 #[allow(dead_code)]
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct XAnyEvent { type_: c_int, serial: libc::c_ulong, send_event: c_int, display: *mut libc::c_void, window: libc::c_ulong }
+struct XAnyEvent {
+    type_: c_int,
+    serial: libc::c_ulong,
+    send_event: c_int,
+    display: *mut libc::c_void,
+    window: libc::c_ulong,
+}
 
 #[allow(dead_code)]
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct XKeyEvent { type_: c_int, serial: libc::c_ulong, send_event: c_int, display: *mut libc::c_void, window: libc::c_ulong, root: libc::c_ulong, subwindow: libc::c_ulong, time: libc::c_ulong, x: c_int, y: c_int, x_root: c_int, y_root: c_int, state: libc::c_uint, keycode: libc::c_uint, same_screen: c_int }
+struct XKeyEvent {
+    type_: c_int,
+    serial: libc::c_ulong,
+    send_event: c_int,
+    display: *mut libc::c_void,
+    window: libc::c_ulong,
+    root: libc::c_ulong,
+    subwindow: libc::c_ulong,
+    time: libc::c_ulong,
+    x: c_int,
+    y: c_int,
+    x_root: c_int,
+    y_root: c_int,
+    state: libc::c_uint,
+    keycode: libc::c_uint,
+    same_screen: c_int,
+}
 
 #[allow(dead_code)]
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct XButtonEvent { type_: c_int, serial: libc::c_ulong, send_event: c_int, display: *mut libc::c_void, window: libc::c_ulong, root: libc::c_ulong, subwindow: libc::c_ulong, time: libc::c_ulong, x: c_int, y: c_int, x_root: c_int, y_root: c_int, state: libc::c_uint, button: libc::c_uint, same_screen: c_int }
+struct XButtonEvent {
+    type_: c_int,
+    serial: libc::c_ulong,
+    send_event: c_int,
+    display: *mut libc::c_void,
+    window: libc::c_ulong,
+    root: libc::c_ulong,
+    subwindow: libc::c_ulong,
+    time: libc::c_ulong,
+    x: c_int,
+    y: c_int,
+    x_root: c_int,
+    y_root: c_int,
+    state: libc::c_uint,
+    button: libc::c_uint,
+    same_screen: c_int,
+}
 
 #[allow(dead_code)]
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct XMotionEvent { type_: c_int, serial: libc::c_ulong, send_event: c_int, display: *mut libc::c_void, window: libc::c_ulong, root: libc::c_ulong, subwindow: libc::c_ulong, time: libc::c_ulong, x: c_int, y: c_int, x_root: c_int, y_root: c_int, state: libc::c_uint, is_hint: libc::c_uchar, same_screen: c_int }
+struct XMotionEvent {
+    type_: c_int,
+    serial: libc::c_ulong,
+    send_event: c_int,
+    display: *mut libc::c_void,
+    window: libc::c_ulong,
+    root: libc::c_ulong,
+    subwindow: libc::c_ulong,
+    time: libc::c_ulong,
+    x: c_int,
+    y: c_int,
+    x_root: c_int,
+    y_root: c_int,
+    state: libc::c_uint,
+    is_hint: libc::c_uchar,
+    same_screen: c_int,
+}
 
 #[allow(dead_code)]
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct XMapRequestEvent { type_: c_int, serial: libc::c_ulong, send_event: c_int, display: *mut libc::c_void, parent: libc::c_ulong, window: libc::c_ulong }
+struct XMapRequestEvent {
+    type_: c_int,
+    serial: libc::c_ulong,
+    send_event: c_int,
+    display: *mut libc::c_void,
+    parent: libc::c_ulong,
+    window: libc::c_ulong,
+}
 
 #[allow(dead_code)]
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct XConfigureRequestEvent { type_: c_int, serial: libc::c_ulong, send_event: c_int, display: *mut libc::c_void, parent: libc::c_ulong, window: libc::c_ulong, x: c_int, y: c_int, width: c_int, height: c_int, border_width: c_int, above: libc::c_ulong, detail: c_int, value_mask: libc::c_ulong }
+struct XMapEvent {
+    type_: c_int,
+    serial: libc::c_ulong,
+    send_event: c_int,
+    display: *mut libc::c_void,
+    event: libc::c_ulong,
+    window: libc::c_ulong,
+    override_redirect: c_int,
+}
 
 #[allow(dead_code)]
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct XConfigureEvent { type_: c_int, serial: libc::c_ulong, send_event: c_int, display: *mut libc::c_void, event: libc::c_ulong, window: libc::c_ulong, x: c_int, y: c_int, width: c_int, height: c_int, border_width: c_int, above: libc::c_ulong, override_redirect: c_int }
+struct XConfigureRequestEvent {
+    type_: c_int,
+    serial: libc::c_ulong,
+    send_event: c_int,
+    display: *mut libc::c_void,
+    parent: libc::c_ulong,
+    window: libc::c_ulong,
+    x: c_int,
+    y: c_int,
+    width: c_int,
+    height: c_int,
+    border_width: c_int,
+    above: libc::c_ulong,
+    detail: c_int,
+    value_mask: libc::c_ulong,
+}
 
 #[allow(dead_code)]
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct XUnmapEvent { type_: c_int, serial: libc::c_ulong, send_event: c_int, display: *mut libc::c_void, event: libc::c_ulong, window: libc::c_ulong, from_configure: c_int }
+struct XConfigureEvent {
+    type_: c_int,
+    serial: libc::c_ulong,
+    send_event: c_int,
+    display: *mut libc::c_void,
+    event: libc::c_ulong,
+    window: libc::c_ulong,
+    x: c_int,
+    y: c_int,
+    width: c_int,
+    height: c_int,
+    border_width: c_int,
+    above: libc::c_ulong,
+    override_redirect: c_int,
+}
 
 #[allow(dead_code)]
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct XDestroyWindowEvent { type_: c_int, serial: libc::c_ulong, send_event: c_int, display: *mut libc::c_void, event: libc::c_ulong, window: libc::c_ulong }
+struct XUnmapEvent {
+    type_: c_int,
+    serial: libc::c_ulong,
+    send_event: c_int,
+    display: *mut libc::c_void,
+    event: libc::c_ulong,
+    window: libc::c_ulong,
+    from_configure: c_int,
+}
 
 #[allow(dead_code)]
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct XPropertyEvent { type_: c_int, serial: libc::c_ulong, send_event: c_int, display: *mut libc::c_void, window: libc::c_ulong, atom: libc::c_ulong, time: libc::c_ulong, state: c_int }
+struct XDestroyWindowEvent {
+    type_: c_int,
+    serial: libc::c_ulong,
+    send_event: c_int,
+    display: *mut libc::c_void,
+    event: libc::c_ulong,
+    window: libc::c_ulong,
+}
 
 #[allow(dead_code)]
 #[repr(C)]
 #[derive(Copy, Clone)]
-struct XClientMessageEvent { type_: c_int, serial: libc::c_ulong, send_event: c_int, display: *mut libc::c_void, window: libc::c_ulong, message_type: libc::c_ulong, format: c_int, data: [u64; 5] }
+struct XPropertyEvent {
+    type_: c_int,
+    serial: libc::c_ulong,
+    send_event: c_int,
+    display: *mut libc::c_void,
+    window: libc::c_ulong,
+    atom: libc::c_ulong,
+    time: libc::c_ulong,
+    state: c_int,
+}
+
+#[allow(dead_code)]
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct XClientMessageEvent {
+    type_: c_int,
+    serial: libc::c_ulong,
+    send_event: c_int,
+    display: *mut libc::c_void,
+    window: libc::c_ulong,
+    message_type: libc::c_ulong,
+    format: c_int,
+    data: [u64; 5],
+}
 
 #[allow(dead_code)]
 #[repr(C)]
@@ -129,6 +268,7 @@ union XEvent {
     xbutton: XButtonEvent,
     xmotion: XMotionEvent,
     xmaprequest: XMapRequestEvent,
+    xmap: XMapEvent,
     xconfigurerequest: XConfigureRequestEvent,
     xconfigure: XConfigureEvent,
     xunmap: XUnmapEvent,
@@ -139,14 +279,33 @@ union XEvent {
 }
 
 impl XEvent {
-    fn new() -> Self { Self { _pad: [0; 24] } }
+    fn new() -> Self {
+        Self { _pad: [0; 24] }
+    }
 }
 
 #[derive(Clone, Copy)]
 enum Drag {
-    Pan    { sx: i32, sy: i32, off_x: i32, off_y: i32 },
-    Move   { win: c_ulong, sx: i32, sy: i32, ox: i32, oy: i32 },
-    Resize { win: c_ulong, sx: i32, sy: i32, ow: i32, oh: i32 },
+    Pan {
+        sx: i32,
+        sy: i32,
+        off_x: i32,
+        off_y: i32,
+    },
+    Move {
+        win: c_ulong,
+        sx: i32,
+        sy: i32,
+        ox: i32,
+        oy: i32,
+    },
+    Resize {
+        win: c_ulong,
+        sx: i32,
+        sy: i32,
+        ow: i32,
+        oh: i32,
+    },
 }
 
 // ============================================================================
@@ -163,36 +322,203 @@ unsafe extern "C" {
     fn XRootWindow(display: *mut libc::c_void, screen_number: c_int) -> c_ulong;
     fn XSelectInput(display: *mut libc::c_void, w: c_ulong, event_mask: libc::c_long) -> c_int;
     fn XSync(display: *mut libc::c_void, discard: c_int) -> c_int;
+    fn XFlush(display: *mut libc::c_void) -> c_int;
     fn XNextEvent(display: *mut libc::c_void, event_return: *mut XEvent) -> c_int;
     fn XMapWindow(display: *mut libc::c_void, w: c_ulong) -> c_int;
     fn XUnmapWindow(display: *mut libc::c_void, w: c_ulong) -> c_int;
-    fn XMoveResizeWindow(display: *mut libc::c_void, w: c_ulong, x: c_int, y: c_int, width: libc::c_uint, height: libc::c_uint) -> c_int;
-    fn XConfigureWindow(display: *mut libc::c_void, w: c_ulong, value_mask: libc::c_uint, values: *mut XWindowChanges) -> c_int;
+    fn XMoveResizeWindow(
+        display: *mut libc::c_void,
+        w: c_ulong,
+        x: c_int,
+        y: c_int,
+        width: libc::c_uint,
+        height: libc::c_uint,
+    ) -> c_int;
+    fn XConfigureWindow(
+        display: *mut libc::c_void,
+        w: c_ulong,
+        value_mask: libc::c_uint,
+        values: *mut XWindowChanges,
+    ) -> c_int;
     fn XSetWindowBorderWidth(display: *mut libc::c_void, w: c_ulong, width: libc::c_uint) -> c_int;
-    fn XSetWindowBorder(display: *mut libc::c_void, w: c_ulong, border_color: libc::c_ulong) -> c_int;
-    fn XSetInputFocus(display: *mut libc::c_void, focus: c_ulong, revert_to: c_int, time: libc::c_ulong) -> c_int;
+    fn XSetWindowBorder(
+        display: *mut libc::c_void,
+        w: c_ulong,
+        border_color: libc::c_ulong,
+    ) -> c_int;
+    fn XSetInputFocus(
+        display: *mut libc::c_void,
+        focus: c_ulong,
+        revert_to: c_int,
+        time: libc::c_ulong,
+    ) -> c_int;
     fn XRaiseWindow(display: *mut libc::c_void, w: c_ulong) -> c_int;
     fn XKillClient(display: *mut libc::c_void, w: c_ulong) -> c_int;
     fn XStringToKeysym(string: *const c_char) -> libc::c_ulong;
     fn XKeysymToKeycode(display: *mut libc::c_void, keysym: libc::c_ulong) -> libc::c_uchar;
-    fn XGrabKey(display: *mut libc::c_void, keycode: c_int, modifiers: libc::c_uint, grab_window: c_ulong, owner_events: c_int, pointer_mode: c_int, keyboard_mode: c_int) -> c_int;
-    fn XUngrabKey(display: *mut libc::c_void, keycode: c_int, modifiers: libc::c_uint, grab_window: c_ulong) -> c_int;
-    fn XGrabButton(display: *mut libc::c_void, button: libc::c_uint, modifiers: libc::c_uint, grab_window: c_ulong, owner_events: c_int, event_mask: libc::c_uint, pointer_mode: c_int, keyboard_mode: c_int, confine_to: c_ulong, cursor: c_ulong) -> c_int;
-    fn XGrabPointer(display: *mut libc::c_void, grab_window: c_ulong, owner_events: c_int, event_mask: libc::c_uint, pointer_mode: c_int, keyboard_mode: c_int, confine_to: c_ulong, cursor: c_ulong, time: libc::c_ulong) -> c_int;
+    fn XGrabKey(
+        display: *mut libc::c_void,
+        keycode: c_int,
+        modifiers: libc::c_uint,
+        grab_window: c_ulong,
+        owner_events: c_int,
+        pointer_mode: c_int,
+        keyboard_mode: c_int,
+    ) -> c_int;
+    fn XUngrabKey(
+        display: *mut libc::c_void,
+        keycode: c_int,
+        modifiers: libc::c_uint,
+        grab_window: c_ulong,
+    ) -> c_int;
+    fn XGrabButton(
+        display: *mut libc::c_void,
+        button: libc::c_uint,
+        modifiers: libc::c_uint,
+        grab_window: c_ulong,
+        owner_events: c_int,
+        event_mask: libc::c_uint,
+        pointer_mode: c_int,
+        keyboard_mode: c_int,
+        confine_to: c_ulong,
+        cursor: c_ulong,
+    ) -> c_int;
+    fn XGrabPointer(
+        display: *mut libc::c_void,
+        grab_window: c_ulong,
+        owner_events: c_int,
+        event_mask: libc::c_uint,
+        pointer_mode: c_int,
+        keyboard_mode: c_int,
+        confine_to: c_ulong,
+        cursor: c_ulong,
+        time: libc::c_ulong,
+    ) -> c_int;
     fn XUngrabPointer(display: *mut libc::c_void, time: libc::c_ulong) -> c_int;
     fn XAllowEvents(display: *mut libc::c_void, event_mode: c_int, time: libc::c_ulong) -> c_int;
-    fn XQueryPointer(display: *mut libc::c_void, w: c_ulong, root_return: *mut c_ulong, child_return: *mut c_ulong, root_x_return: *mut c_int, root_y_return: *mut c_int, win_x_return: *mut c_int, win_y_return: *mut c_int, mask_return: *mut libc::c_uint) -> c_int;
-    fn XGetClassHint(display: *mut libc::c_void, window: c_ulong, class_hints_return: *mut XClassHint) -> c_int;
-    fn XGetWMProtocols(display: *mut libc::c_void, w: c_ulong, protocols: *mut *mut c_ulong, count: *mut c_int) -> c_int;
-    fn XInternAtom(display: *mut libc::c_void, atom_name: *const c_char, only_if_exists: c_int) -> libc::c_ulong;
-    fn XChangeProperty(display: *mut libc::c_void, w: c_ulong, property: libc::c_ulong, type_: libc::c_ulong, format: c_int, mode: c_int, data: *const u8, nelements: c_int) -> c_int;
-    fn XGetWindowProperty(display: *mut libc::c_void, w: c_ulong, property: libc::c_ulong, long_offset: libc::c_long, long_length: libc::c_long, delete: c_int, req_type: libc::c_ulong, actual_type_return: *mut libc::c_ulong, actual_format_return: *mut c_int, nitems_return: *mut libc::c_ulong, bytes_after_return: *mut libc::c_ulong, prop_return: *mut *mut u8) -> c_int;
-    fn XCreateSimpleWindow(display: *mut libc::c_void, parent: c_ulong, x: c_int, y: c_int, width: libc::c_uint, height: libc::c_uint, border_width: libc::c_uint, border: c_ulong, background: c_ulong) -> c_ulong;
-    fn XSendEvent(display: *mut libc::c_void, window: c_ulong, propagate: c_int, event_mask: libc::c_long, event_send: *mut XEvent) -> c_int;
+    fn XQueryPointer(
+        display: *mut libc::c_void,
+        w: c_ulong,
+        root_return: *mut c_ulong,
+        child_return: *mut c_ulong,
+        root_x_return: *mut c_int,
+        root_y_return: *mut c_int,
+        win_x_return: *mut c_int,
+        win_y_return: *mut c_int,
+        mask_return: *mut libc::c_uint,
+    ) -> c_int;
+    fn XGetClassHint(
+        display: *mut libc::c_void,
+        window: c_ulong,
+        class_hints_return: *mut XClassHint,
+    ) -> c_int;
+    fn XGetWMProtocols(
+        display: *mut libc::c_void,
+        w: c_ulong,
+        protocols: *mut *mut c_ulong,
+        count: *mut c_int,
+    ) -> c_int;
+    fn XInternAtom(
+        display: *mut libc::c_void,
+        atom_name: *const c_char,
+        only_if_exists: c_int,
+    ) -> libc::c_ulong;
+    fn XChangeProperty(
+        display: *mut libc::c_void,
+        w: c_ulong,
+        property: libc::c_ulong,
+        type_: libc::c_ulong,
+        format: c_int,
+        mode: c_int,
+        data: *const u8,
+        nelements: c_int,
+    ) -> c_int;
+    fn XGetWindowProperty(
+        display: *mut libc::c_void,
+        w: c_ulong,
+        property: libc::c_ulong,
+        long_offset: libc::c_long,
+        long_length: libc::c_long,
+        delete: c_int,
+        req_type: libc::c_ulong,
+        actual_type_return: *mut libc::c_ulong,
+        actual_format_return: *mut c_int,
+        nitems_return: *mut libc::c_ulong,
+        bytes_after_return: *mut libc::c_ulong,
+        prop_return: *mut *mut u8,
+    ) -> c_int;
+    fn XCreateSimpleWindow(
+        display: *mut libc::c_void,
+        parent: c_ulong,
+        x: c_int,
+        y: c_int,
+        width: libc::c_uint,
+        height: libc::c_uint,
+        border_width: libc::c_uint,
+        border: c_ulong,
+        background: c_ulong,
+    ) -> c_ulong;
+    fn XCreateGC(
+        display: *mut libc::c_void,
+        drawable: c_ulong,
+        valuemask: c_ulong,
+        values: *mut libc::c_void,
+    ) -> *mut libc::c_void;
+    fn XSetForeground(
+        display: *mut libc::c_void,
+        gc: *mut libc::c_void,
+        foreground: c_ulong,
+    ) -> c_int;
+    fn XDrawString(
+        display: *mut libc::c_void,
+        drawable: c_ulong,
+        gc: *mut libc::c_void,
+        x: c_int,
+        y: c_int,
+        string: *const c_char,
+        length: c_int,
+    ) -> c_int;
+    fn XFreeGC(display: *mut libc::c_void, gc: *mut libc::c_void) -> c_int;
+    fn XDestroyWindow(display: *mut libc::c_void, w: c_ulong) -> c_int;
+    fn XSendEvent(
+        display: *mut libc::c_void,
+        window: c_ulong,
+        propagate: c_int,
+        event_mask: libc::c_long,
+        event_send: *mut XEvent,
+    ) -> c_int;
     fn XFree(data: *mut libc::c_void) -> c_int;
-    fn XSetErrorHandler(handler: XErrorHandler) -> XErrorHandler;
-    fn XRRGetMonitors(dpy: *mut libc::c_void, window: c_ulong, get_active: c_int, nmonitors: *mut c_int) -> *mut XRRMonitorInfo;
+    pub(crate) fn XSetErrorHandler(handler: XErrorHandler) -> XErrorHandler;
+    fn XRRGetMonitors(
+        dpy: *mut libc::c_void,
+        window: c_ulong,
+        get_active: c_int,
+        nmonitors: *mut c_int,
+    ) -> *mut XRRMonitorInfo;
     fn XRRFreeMonitors(monitors: *mut XRRMonitorInfo);
+}
+
+#[repr(C)]
+struct XRectangle {
+    x: i16,
+    y: i16,
+    width: u16,
+    height: u16,
+}
+
+#[link(name = "Xext")]
+unsafe extern "C" {
+    fn XShapeCombineRectangles(
+        display: *mut libc::c_void,
+        window: c_ulong,
+        dest_kind: c_int,
+        x_off: c_int,
+        y_off: c_int,
+        rectangles: *mut XRectangle,
+        n_rectangles: c_int,
+        operation: c_int,
+        ordering: c_int,
+    );
 }
 
 // ============================================================================
@@ -209,9 +535,11 @@ const SUBSTRUCTURE_REDIRECT_MASK: libc::c_long = 1 << 20;
 const FOCUS_CHANGE_MASK: libc::c_long = 1 << 21;
 const PROPERTY_CHANGE_MASK: libc::c_long = 1 << 22;
 
-const CLIENT_EVENT_MASK: libc::c_long = STRUCTURE_NOTIFY_MASK | PROPERTY_CHANGE_MASK | FOCUS_CHANGE_MASK;
+const CLIENT_EVENT_MASK: libc::c_long =
+    STRUCTURE_NOTIFY_MASK | PROPERTY_CHANGE_MASK | FOCUS_CHANGE_MASK;
 
 const MAP_REQUEST: i32 = 20;
+const MAP_NOTIFY: i32 = 19;
 const UNMAP_NOTIFY: i32 = 18;
 const DESTROY_NOTIFY: i32 = 17;
 const KEY_PRESS: i32 = 2;
@@ -226,6 +554,7 @@ const MOD2_MASK: libc::c_uint = 1 << 4;
 const SUPER_MASK: libc::c_uint = 1 << 6;
 const GRAB_MODE_SYNC: libc::c_int = 0;
 const GRAB_MODE_ASYNC: libc::c_int = 1;
+const ASYNC_POINTER: libc::c_int = 0;
 const REVERT_TO_POINTER_ROOT: libc::c_int = 1;
 const REPLAY_POINTER: libc::c_int = 2;
 const ANY_BUTTON: libc::c_uint = 0;
@@ -238,6 +567,9 @@ const PROP_MODE_REPLACE: c_int = 0;
 
 const MIN_ZOOM: f32 = 0.15;
 const MAX_ZOOM: f32 = 1.0;
+const SHAPE_BOUNDING: c_int = 0;
+const SHAPE_SET: c_int = 0;
+const UNSORTED: c_int = 0;
 
 static OTHER_WM: AtomicBool = AtomicBool::new(false);
 
@@ -263,10 +595,19 @@ extern "C" fn reap(_: c_int) {
 // ============================================================================
 
 #[derive(Clone, Copy)]
-struct Monitor { x: i32, y: i32, width: i32, height: i32, primary: c_int }
+struct Monitor {
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    primary: c_int,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct Point { x: i32, y: i32 }
+struct Point {
+    x: i32,
+    y: i32,
+}
 
 #[derive(Clone)]
 struct Client {
@@ -288,7 +629,12 @@ struct Client {
 }
 
 #[derive(Copy, Clone)]
-struct Struts { top: i32, bottom: i32, left: i32, right: i32 }
+struct Struts {
+    top: i32,
+    bottom: i32,
+    left: i32,
+    right: i32,
+}
 
 struct Atoms {
     net_supporting: libc::c_ulong,
@@ -314,32 +660,68 @@ struct KeyBinding {
 // 5. HELPERS
 // ============================================================================
 
-unsafe fn get_monitors(display: *mut libc::c_void, root: libc::c_ulong, screen: c_int) -> Vec<Monitor> {
+unsafe fn get_monitors(
+    display: *mut libc::c_void,
+    root: libc::c_ulong,
+    screen: c_int,
+) -> Vec<Monitor> {
     let mut nmonitors = 0;
     let monitors_ptr = unsafe { XRRGetMonitors(display, root, 1, &mut nmonitors) };
     let mut monitors = Vec::new();
 
-    if !monitors_ptr.is_null() && nmonitors > 0 {
-        for i in 0..nmonitors as usize {
-            let m = unsafe { *monitors_ptr.add(i) };
-            if m.width > 0 && m.height > 0 {
-                monitors.push(Monitor { x: m.x, y: m.y, width: m.width, height: m.height, primary: m.primary });
+    if !monitors_ptr.is_null() {
+        if nmonitors > 0 {
+            for i in 0..nmonitors as usize {
+                let m = unsafe { *monitors_ptr.add(i) };
+                if m.width > 0 && m.height > 0 {
+                    monitors.push(Monitor {
+                        x: m.x,
+                        y: m.y,
+                        width: m.width,
+                        height: m.height,
+                        primary: m.primary,
+                    });
+                }
             }
         }
-        unsafe { XRRFreeMonitors(monitors_ptr); }
+        unsafe {
+            XRRFreeMonitors(monitors_ptr);
+        }
     }
 
     if monitors.is_empty() {
         let w = unsafe { XDisplayWidth(display, screen) };
         let h = unsafe { XDisplayHeight(display, screen) };
-        monitors.push(Monitor { x: 0, y: 0, width: w, height: h, primary: 1 });
+        monitors.push(Monitor {
+            x: 0,
+            y: 0,
+            width: w,
+            height: h,
+            primary: 1,
+        });
     }
     monitors
 }
 
-unsafe fn primary_usable_area(display: *mut libc::c_void, root: libc::c_ulong, screen: c_int, s: &Struts) -> (i32, i32, i32, i32) {
+unsafe fn primary_usable_area(
+    display: *mut libc::c_void,
+    root: libc::c_ulong,
+    screen: c_int,
+    s: &Struts,
+) -> (i32, i32, i32, i32) {
     let monitors = unsafe { get_monitors(display, root, screen) };
-    let mon = monitors.iter().find(|m| m.primary != 0).or_else(|| monitors.first()).copied().unwrap_or(Monitor { x: 0, y: 0, width: 1920, height: 1080, primary: 1 });
+    let mon = monitors
+        .iter()
+        .find(|m| m.primary != 0)
+        .or_else(|| monitors.first())
+        .copied()
+        .unwrap_or(Monitor {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+            primary: 1,
+        });
     (
         mon.x + s.left,
         mon.y + s.top,
@@ -349,7 +731,12 @@ unsafe fn primary_usable_area(display: *mut libc::c_void, root: libc::c_ulong, s
 }
 
 /// Returns the usable area of the monitor where the mouse cursor currently resides.
-unsafe fn monitor_usable_area_under_cursor(display: *mut libc::c_void, root: libc::c_ulong, screen: c_int, s: &Struts) -> (i32, i32, i32, i32) {
+unsafe fn monitor_usable_area_under_cursor(
+    display: *mut libc::c_void,
+    root: libc::c_ulong,
+    screen: c_int,
+    s: &Struts,
+) -> (i32, i32, i32, i32) {
     let monitors = unsafe { get_monitors(display, root, screen) };
     let mut root_ret = 0;
     let mut child_ret = 0;
@@ -360,18 +747,37 @@ unsafe fn monitor_usable_area_under_cursor(display: *mut libc::c_void, root: lib
     let mut mask = 0;
 
     let cursor_on_monitor = unsafe {
-        XQueryPointer(display, root, &mut root_ret, &mut child_ret, &mut rx, &mut ry, &mut wx, &mut wy, &mut mask) != 0
+        XQueryPointer(
+            display,
+            root,
+            &mut root_ret,
+            &mut child_ret,
+            &mut rx,
+            &mut ry,
+            &mut wx,
+            &mut wy,
+            &mut mask,
+        ) != 0
     };
 
     let mon = if cursor_on_monitor {
-        monitors.iter().find(|m| {
-            rx >= m.x && rx < m.x + m.width && ry >= m.y && ry < m.y + m.height
-        }).or_else(|| monitors.iter().find(|m| m.primary != 0)).or_else(|| monitors.first()).copied()
+        monitors
+            .iter()
+            .find(|m| rx >= m.x && rx < m.x + m.width && ry >= m.y && ry < m.y + m.height)
+            .or_else(|| monitors.iter().find(|m| m.primary != 0))
+            .or_else(|| monitors.first())
+            .copied()
     } else {
         None
     };
 
-    let m = mon.unwrap_or(Monitor { x: 0, y: 0, width: 1920, height: 1080, primary: 1 });
+    let m = mon.unwrap_or(Monitor {
+        x: 0,
+        y: 0,
+        width: 1920,
+        height: 1080,
+        primary: 1,
+    });
     (
         m.x + s.left,
         m.y + s.top,
@@ -383,19 +789,68 @@ unsafe fn monitor_usable_area_under_cursor(display: *mut libc::c_void, root: lib
 fn zoom_rect(x: i32, y: i32, w: u32, h: u32, z: f32, cx: i32, cy: i32) -> (i32, i32, u32, u32) {
     let sx = cx + ((x - cx) as f32 * z) as i32;
     let sy = cy + ((y - cy) as f32 * z) as i32;
-    (sx, sy, ((w as f32 * z) as u32).max(40), ((h as f32 * z) as u32).max(30))
+    (
+        sx,
+        sy,
+        ((w as f32 * z) as u32).max(40),
+        ((h as f32 * z) as u32).max(30),
+    )
+}
+
+fn animate_zoom(
+    from: f32,
+    to: f32,
+    enabled: bool,
+    duration_ms: u32,
+    mut draw_frame: impl FnMut(f32),
+) {
+    if !enabled || duration_ms == 0 {
+        draw_frame(to);
+        return;
+    }
+    let frames = duration_ms.div_ceil(12).clamp(1, 30);
+    let frame_time = (duration_ms / frames).max(1);
+    for frame in 1..=frames {
+        let t = frame as f32 / frames as f32;
+        let eased = t * t * (3.0 - 2.0 * t);
+        draw_frame(from + (to - from) * eased);
+        std::thread::sleep(std::time::Duration::from_millis(frame_time as u64));
+    }
 }
 
 unsafe fn read_struts(display: *mut libc::c_void, win: c_ulong, atom: c_ulong) -> Option<Struts> {
     unsafe {
         let (mut t, mut f, mut n, mut b) = (0, 0, 0, 0);
         let mut data: *mut u8 = ptr::null_mut();
-        if XGetWindowProperty(display, win, atom, 0, 12, 0, XA_CARDINAL,
-            &mut t, &mut f, &mut n, &mut b, &mut data) != 0 || data.is_null() { return None; }
+        if XGetWindowProperty(
+            display,
+            win,
+            atom,
+            0,
+            12,
+            0,
+            XA_CARDINAL,
+            &mut t,
+            &mut f,
+            &mut n,
+            &mut b,
+            &mut data,
+        ) != 0
+            || data.is_null()
+        {
+            return None;
+        }
         let s = if n >= 4 {
             let v = std::slice::from_raw_parts(data as *const c_ulong, n as usize);
-            Some(Struts { left: v[0] as i32, right: v[1] as i32, top: v[2] as i32, bottom: v[3] as i32 })
-        } else { None };
+            Some(Struts {
+                left: v[0] as i32,
+                right: v[1] as i32,
+                top: v[2] as i32,
+                bottom: v[3] as i32,
+            })
+        } else {
+            None
+        };
         XFree(data as *mut libc::c_void);
         s
     }
@@ -405,20 +860,137 @@ unsafe fn supports_delete(display: *mut libc::c_void, win: c_ulong, delete_atom:
     unsafe {
         let mut list: *mut c_ulong = ptr::null_mut();
         let mut n = 0;
-        if XGetWMProtocols(display, win, &mut list, &mut n) == 0 || list.is_null() { return false; }
+        if XGetWMProtocols(display, win, &mut list, &mut n) == 0 || list.is_null() {
+            return false;
+        }
         let found = std::slice::from_raw_parts(list, n as usize).contains(&delete_atom);
         XFree(list as *mut libc::c_void);
         found
     }
 }
 
-unsafe fn update_ewmh_atoms(display: *mut libc::c_void, root: libc::c_ulong, clients: &[Client], focused_window: libc::c_ulong, atoms: &Atoms) {
+unsafe fn show_config_warning(
+    display: *mut libc::c_void,
+    root: c_ulong,
+    screen: c_int,
+    warnings: &[String],
+) -> c_ulong {
+    if warnings.is_empty() {
+        return 0;
+    }
+    let first = warnings[0].chars().take(120).collect::<String>();
+    let message = if warnings.len() == 1 {
+        first
+    } else {
+        format!("{} (and {} more)", first, warnings.len() - 1)
+    };
+    let text = std::ffi::CString::new(message.replace('\0', " ")).unwrap_or_default();
+    let width = (unsafe { XDisplayWidth(display, screen) } - 24).max(360) as libc::c_uint;
+    let window =
+        unsafe { XCreateSimpleWindow(display, root, 12, 12, width, 34, 1, 0x8b3030, 0x241a1a) };
+    let gc = unsafe { XCreateGC(display, window, 0, ptr::null_mut()) };
+    if !gc.is_null() {
+        unsafe {
+            XSetForeground(display, gc, 0xffffff);
+            XDrawString(
+                display,
+                window,
+                gc,
+                12,
+                22,
+                text.as_ptr(),
+                text.as_bytes().len() as c_int,
+            );
+            XFreeGC(display, gc);
+        }
+    }
+    unsafe {
+        XMapWindow(display, window);
+        XRaiseWindow(display, window);
+        XSync(display, 0);
+    }
+    window
+}
+
+unsafe fn window_border_settings(
+    display: *mut libc::c_void,
+    window: c_ulong,
+    cfg: &config::Config,
+) -> (u64, u32) {
+    let mut color = cfg.border_color;
+    let mut width = cfg.border_width;
+    let mut hint = XClassHint {
+        res_name: ptr::null_mut(),
+        res_class: ptr::null_mut(),
+    };
+    if unsafe { XGetClassHint(display, window, &mut hint) } != 0 {
+        if !hint.res_class.is_null()
+            && let Ok(class_name) = unsafe { CStr::from_ptr(hint.res_class) }.to_str()
+        {
+            for rule in &cfg.window_rules {
+                if rule.selector_key == "class" && rule.selector_val == class_name {
+                    if rule.property == "border_color" {
+                        let clean = rule.value.strip_prefix("0x").unwrap_or(&rule.value);
+                        if let Ok(value) = u64::from_str_radix(clean, 16)
+                            && value <= u32::MAX as u64
+                        {
+                            color = value;
+                        }
+                    } else if rule.property == "border_width"
+                        && let Ok(value) = rule.value.parse::<u32>()
+                        && value <= u16::MAX as u32
+                    {
+                        width = value;
+                    }
+                }
+            }
+        }
+        unsafe {
+            if !hint.res_name.is_null() {
+                XFree(hint.res_name as *mut libc::c_void);
+            }
+            if !hint.res_class.is_null() {
+                XFree(hint.res_class as *mut libc::c_void);
+            }
+        }
+    }
+    (color, width)
+}
+
+unsafe fn update_ewmh_atoms(
+    display: *mut libc::c_void,
+    root: libc::c_ulong,
+    clients: &[Client],
+    focused_window: libc::c_ulong,
+    atoms: &Atoms,
+) {
     let wins: Vec<libc::c_ulong> = clients.iter().map(|c| c.window).collect();
     unsafe {
-        let data = if wins.is_empty() { ptr::null() } else { wins.as_ptr() as *const u8 };
-        XChangeProperty(display, root, atoms.net_client_list, XA_WINDOW, 32, PROP_MODE_REPLACE, data, wins.len() as c_int);
-        XChangeProperty(display, root, atoms.net_active_window, XA_WINDOW, 32, PROP_MODE_REPLACE,
-            &focused_window as *const libc::c_ulong as *const u8, 1);
+        let data = if wins.is_empty() {
+            ptr::null()
+        } else {
+            wins.as_ptr() as *const u8
+        };
+        XChangeProperty(
+            display,
+            root,
+            atoms.net_client_list,
+            XA_WINDOW,
+            32,
+            PROP_MODE_REPLACE,
+            data,
+            wins.len() as c_int,
+        );
+        XChangeProperty(
+            display,
+            root,
+            atoms.net_active_window,
+            XA_WINDOW,
+            32,
+            PROP_MODE_REPLACE,
+            &focused_window as *const libc::c_ulong as *const u8,
+            1,
+        );
     }
 }
 
@@ -432,10 +1004,11 @@ unsafe fn set_focus(
     atoms: &Atoms,
 ) {
     unsafe {
-        if *focused != 0 && *focused != win {
-            if let Some(old) = clients.iter().find(|c| c.window == *focused) {
-                XSetWindowBorder(display, old.window, old.border_color);
-            }
+        if *focused != 0
+            && *focused != win
+            && let Some(old) = clients.iter().find(|c| c.window == *focused)
+        {
+            XSetWindowBorder(display, old.window, old.border_color);
         }
         if win != 0 {
             XSetWindowBorder(display, win, cfg.focused_border_color);
@@ -486,6 +1059,11 @@ fn main() {
             config::Config::default()
         }
     };
+    let compositor_config_path = config_path
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("comp.conf");
+    let mut compositor_config = comp_config::load(&compositor_config_path).unwrap_or_default();
 
     unsafe {
         let display = XOpenDisplay(ptr::null());
@@ -502,8 +1080,12 @@ fn main() {
         XSelectInput(
             display,
             root_window,
-            SUBSTRUCTURE_REDIRECT_MASK | SUBSTRUCTURE_NOTIFY_MASK | KEY_PRESS_MASK
-                | BUTTON_PRESS_MASK | BUTTON_RELEASE_MASK | POINTER_MOTION_MASK,
+            SUBSTRUCTURE_REDIRECT_MASK
+                | SUBSTRUCTURE_NOTIFY_MASK
+                | KEY_PRESS_MASK
+                | BUTTON_PRESS_MASK
+                | BUTTON_RELEASE_MASK
+                | POINTER_MOTION_MASK,
         );
         XSync(display, 0);
 
@@ -532,14 +1114,87 @@ fn main() {
 
         // --- EWMH root properties ---
         let supporting_window = XCreateSimpleWindow(display, root_window, 0, 0, 1, 1, 0, 0, 0);
-        XChangeProperty(display, root_window, atoms.net_supporting, XA_WINDOW, 32, PROP_MODE_REPLACE, &supporting_window as *const u64 as *const u8, 1);
-        XChangeProperty(display, supporting_window, atoms.net_supporting, XA_WINDOW, 32, PROP_MODE_REPLACE, &supporting_window as *const u64 as *const u8, 1);
+        XChangeProperty(
+            display,
+            root_window,
+            atoms.net_supporting,
+            XA_WINDOW,
+            32,
+            PROP_MODE_REPLACE,
+            &supporting_window as *const u64 as *const u8,
+            1,
+        );
+        XChangeProperty(
+            display,
+            supporting_window,
+            atoms.net_supporting,
+            XA_WINDOW,
+            32,
+            PROP_MODE_REPLACE,
+            &supporting_window as *const u64 as *const u8,
+            1,
+        );
 
         let wm_name = b"AetherWM\0";
-        XChangeProperty(display, supporting_window, atoms.net_wm_name, atoms.utf8_string, 8, PROP_MODE_REPLACE, wm_name.as_ptr(), (wm_name.len() - 1) as c_int);
+        XChangeProperty(
+            display,
+            supporting_window,
+            atoms.net_wm_name,
+            atoms.utf8_string,
+            8,
+            PROP_MODE_REPLACE,
+            wm_name.as_ptr(),
+            (wm_name.len() - 1) as c_int,
+        );
 
-        let supported_atoms = [atoms.net_supporting, atoms.net_wm_name, atoms.net_supported, atoms.net_client_list, atoms.net_active_window];
-        XChangeProperty(display, root_window, atoms.net_supported, XA_ATOM, 32, PROP_MODE_REPLACE, supported_atoms.as_ptr() as *const u8, supported_atoms.len() as c_int);
+        let supported_atoms = [
+            atoms.net_supporting,
+            atoms.net_wm_name,
+            atoms.net_supported,
+            atoms.net_client_list,
+            atoms.net_active_window,
+        ];
+        XChangeProperty(
+            display,
+            root_window,
+            atoms.net_supported,
+            XA_ATOM,
+            32,
+            PROP_MODE_REPLACE,
+            supported_atoms.as_ptr() as *const u8,
+            supported_atoms.len() as c_int,
+        );
+
+        let external_compositor_configured = active_config
+            .autostart
+            .iter()
+            .any(|cmd| cmd.split_whitespace().next() == Some("picom"));
+        let compositor = RefCell::new(if !compositor_config.enabled {
+            eprintln!("AetherWM: built-in compositor disabled by comp.conf");
+            None
+        } else if external_compositor_configured {
+            eprintln!("AetherWM: using configured external compositor instead of the built-in one");
+            None
+        } else {
+            let started = compositor::Compositor::start(
+                display,
+                root_window,
+                screen,
+                supporting_window,
+                &compositor_config,
+            );
+            if started.is_some() {
+                eprintln!("AetherWM: built-in XRender compositor enabled");
+            } else {
+                eprintln!(
+                    "AetherWM: built-in compositor unavailable (XComposite, XDamage, XFixes, XRender, or another compositor may be the cause)"
+                );
+            }
+            started
+        });
+        if let Some(comp) = compositor.borrow().as_ref() {
+            comp.repaint();
+        }
 
         for cmd in &active_config.autostart {
             let _ = std::process::Command::new("sh").arg("-c").arg(cmd).spawn();
@@ -549,31 +1204,68 @@ fn main() {
         let lock_modifiers = [0, LOCK_MASK, MOD2_MASK, LOCK_MASK | MOD2_MASK];
         let mut precomputed_bindings: Vec<KeyBinding> = Vec::new();
 
-        let register_bindings = |disp: *mut libc::c_void, root: libc::c_ulong, cfg: &config::Config, bound: &mut Vec<KeyBinding>| {
+        let register_bindings = |disp: *mut libc::c_void,
+                                 root: libc::c_ulong,
+                                 cfg: &config::Config,
+                                 bound: &mut Vec<KeyBinding>| {
             bound.clear();
             for binding in &cfg.bindings {
                 let mut mod_mask = 0;
-                for m in &binding.modifiers { mod_mask |= parse_modifier(m); }
-                let Ok(c_key) = std::ffi::CString::new(binding.key.clone()) else { continue };
+                for m in &binding.modifiers {
+                    mod_mask |= parse_modifier(m);
+                }
+                let Ok(c_key) = std::ffi::CString::new(binding.key.clone()) else {
+                    continue;
+                };
                 let keysym = XStringToKeysym(c_key.as_ptr());
-                if keysym == 0 { continue; }
+                if keysym == 0 {
+                    continue;
+                }
                 let keycode = XKeysymToKeycode(disp, keysym);
                 if keycode != 0 {
                     for lock in lock_modifiers {
-                        XGrabKey(disp, keycode as c_int, mod_mask | lock, root, 1, GRAB_MODE_ASYNC, GRAB_MODE_ASYNC);
+                        XGrabKey(
+                            disp,
+                            keycode as c_int,
+                            mod_mask | lock,
+                            root,
+                            1,
+                            GRAB_MODE_ASYNC,
+                            GRAB_MODE_ASYNC,
+                        );
                     }
-                    bound.push(KeyBinding { keycode: keycode as u32, modifiers: mod_mask, action: binding.action.clone() });
+                    bound.push(KeyBinding {
+                        keycode: keycode as u32,
+                        modifiers: mod_mask,
+                        action: binding.action.clone(),
+                    });
                 }
             }
         };
 
-        register_bindings(display, root_window, &active_config, &mut precomputed_bindings);
+        register_bindings(
+            display,
+            root_window,
+            &active_config,
+            &mut precomputed_bindings,
+        );
 
-        let root_btn_mask = (BUTTON_PRESS_MASK | BUTTON_RELEASE_MASK | POINTER_MOTION_MASK) as libc::c_uint;
+        let root_btn_mask =
+            (BUTTON_PRESS_MASK | BUTTON_RELEASE_MASK | POINTER_MOTION_MASK) as libc::c_uint;
         for lock in lock_modifiers {
             for btn in [1u32, 2, 3, 4, 5] {
-                XGrabButton(display, btn, SUPER_MASK | lock, root_window, 1, root_btn_mask,
-                    GRAB_MODE_ASYNC, GRAB_MODE_ASYNC, 0, 0);
+                XGrabButton(
+                    display,
+                    btn,
+                    SUPER_MASK | lock,
+                    root_window,
+                    1,
+                    root_btn_mask,
+                    GRAB_MODE_ASYNC,
+                    GRAB_MODE_ASYNC,
+                    0,
+                    0,
+                );
             }
         }
 
@@ -582,22 +1274,98 @@ fn main() {
         let mut cam_offset_x: i32 = 0;
         let mut cam_offset_y: i32 = 0;
         let mut focused_window: libc::c_ulong = 0;
-        let mut struts = Struts { top: 0, bottom: 0, left: 0, right: 0 };
+        let mut struts = Struts {
+            top: 0,
+            bottom: 0,
+            left: 0,
+            right: 0,
+        };
         let dock_window = Cell::new(0 as libc::c_ulong);
+        let mut startup_warnings = active_config.warnings.clone();
+        startup_warnings.extend(compositor_config.warnings.clone());
+        let config_warning_window = Cell::new(show_config_warning(
+            display,
+            root_window,
+            screen,
+            &startup_warnings,
+        ));
         let zoom = Cell::new(1.0f32);
         let zoom_center = Cell::new((0i32, 0i32));
+        let corner_radius = Cell::new(if compositor_config.enabled {
+            compositor_config.corner_radius
+        } else {
+            0
+        });
+        let animate_next_layout = Cell::new(false);
         let mut drag: Option<Drag> = None;
         let mut event = XEvent::new();
 
-        let grab_ptr = |t: libc::c_ulong| XGrabPointer(display, root_window, 1,
-            (POINTER_MOTION_MASK | BUTTON_RELEASE_MASK) as libc::c_uint,
-            GRAB_MODE_ASYNC, GRAB_MODE_ASYNC, 0, 0, t) == 0;
+        let grab_ptr = |t: libc::c_ulong| {
+            XGrabPointer(
+                display,
+                root_window,
+                1,
+                (POINTER_MOTION_MASK | BUTTON_RELEASE_MASK) as libc::c_uint,
+                GRAB_MODE_ASYNC,
+                GRAB_MODE_ASYNC,
+                0,
+                0,
+                t,
+            ) == 0
+        };
 
-        let resize_client = |disp: *mut libc::c_void, win: libc::c_ulong, x: i32, y: i32, w: u32, h: u32, bw: u32| {
+        let resize_client = |disp: *mut libc::c_void,
+                             win: libc::c_ulong,
+                             x: i32,
+                             y: i32,
+                             w: u32,
+                             h: u32,
+                             bw: u32| {
             let actual_w = w.saturating_sub(2 * bw).max(1);
             let actual_h = h.saturating_sub(2 * bw).max(1);
-            XMoveResizeWindow(disp, win, x, y, actual_w, actual_h);
+            if animate_next_layout.get() {
+                if let Some(comp) = compositor.borrow().as_ref() {
+                    comp.animate_geometry(win, x, y, actual_w, actual_h);
+                } else {
+                    XMoveResizeWindow(disp, win, x, y, actual_w, actual_h);
+                }
+            } else {
+                XMoveResizeWindow(disp, win, x, y, actual_w, actual_h);
+            }
 
+            let radius = corner_radius.get().min(actual_w.min(actual_h) / 2);
+            let mut rounded_shape = Vec::with_capacity(actual_h as usize);
+            for row in 0..actual_h {
+                let inset = if radius == 0 || (row >= radius && row < actual_h - radius) {
+                    0
+                } else {
+                    let edge_distance = if row < radius {
+                        radius - row
+                    } else {
+                        row - (actual_h - radius) + 1
+                    };
+                    let r = radius as f64;
+                    (r - (r * r - (r - edge_distance as f64).powi(2)).max(0.0).sqrt()).ceil() as u32
+                };
+                let left = inset.min(actual_w / 2);
+                rounded_shape.push(XRectangle {
+                    x: left.min(i16::MAX as u32) as i16,
+                    y: row.min(i16::MAX as u32) as i16,
+                    width: actual_w.saturating_sub(left * 2).min(u16::MAX as u32) as u16,
+                    height: 1,
+                });
+            }
+            XShapeCombineRectangles(
+                disp,
+                win,
+                SHAPE_BOUNDING,
+                0,
+                0,
+                rounded_shape.as_mut_ptr(),
+                rounded_shape.len() as c_int,
+                SHAPE_SET,
+                UNSORTED,
+            );
             let mut ce = XEvent::new();
             ce.xconfigure.type_ = 22;
             ce.xconfigure.display = disp;
@@ -612,7 +1380,12 @@ fn main() {
         };
 
         // Multi-monitor aware viewport application with per-monitor visibility clipping
-        let apply_camera_viewport = |disp: *mut libc::c_void, cl_vec: &mut Vec<Client>, cur: Point, off_x: i32, off_y: i32, s: &Struts| {
+        let apply_camera_viewport = |disp: *mut libc::c_void,
+                                     cl_vec: &mut Vec<Client>,
+                                     cur: Point,
+                                     off_x: i32,
+                                     off_y: i32,
+                                     s: &Struts| {
             let monitors = get_monitors(disp, root_window, screen);
             let (ux, uy, uw, uh) = primary_usable_area(disp, root_window, screen, s);
             let z = zoom.get();
@@ -623,7 +1396,15 @@ fn main() {
             for c in cl_vec.iter_mut() {
                 let cell_dx = (c.pos.x - cur.x) * uw;
                 let cell_dy = (c.pos.y - cur.y) * uh;
-                let (sx, sy, zw, zh) = zoom_rect(c.x + cell_dx + off_x, c.y + cell_dy + off_y, c.width, c.height, z, cx, cy);
+                let (sx, sy, zw, zh) = zoom_rect(
+                    c.x + cell_dx + off_x,
+                    c.y + cell_dy + off_y,
+                    c.width,
+                    c.height,
+                    z,
+                    cx,
+                    cy,
+                );
                 let (w, h) = (zw as i32, zh as i32);
 
                 let visible = monitors.iter().any(|mon| {
@@ -650,24 +1431,39 @@ fn main() {
             if dock != 0 {
                 XRaiseWindow(disp, dock);
             }
-            XSync(disp, 0);
+            if let Some(comp) = compositor.borrow().as_ref() {
+                comp.repaint();
+            } else {
+                XFlush(disp);
+            }
         };
 
         // Monitor-aware tile layout
-        let tile_layout = |disp: *mut libc::c_void, cl_vec: &mut Vec<Client>, cur: Point, cfg: &config::Config, s: &Struts, off_x: i32, off_y: i32| {
+        let tile_layout = |disp: *mut libc::c_void,
+                           cl_vec: &mut Vec<Client>,
+                           cur: Point,
+                           cfg: &config::Config,
+                           s: &Struts,
+                           off_x: i32,
+                           off_y: i32| {
             let og = cfg.outer_gap as i32;
             let ig = cfg.inner_gap as i32;
 
             let mut groups: HashMap<(i32, i32, i32, i32), Vec<usize>> = HashMap::new();
             for (i, c) in cl_vec.iter().enumerate() {
                 if !c.floating && c.pos == cur {
-                    groups.entry((c.mux, c.muy, c.muw, c.muh)).or_default().push(i);
+                    groups
+                        .entry((c.mux, c.muy, c.muw, c.muh))
+                        .or_default()
+                        .push(i);
                 }
             }
 
             for ((mux, muy, muw, muh), idxs) in groups {
                 let count = idxs.len();
-                if count == 0 { continue; }
+                if count == 0 {
+                    continue;
+                }
                 let avail_w = muw - og * 2;
                 let avail_h = muh - og * 2;
 
@@ -703,10 +1499,16 @@ fn main() {
             apply_camera_viewport(disp, cl_vec, cur, off_x, off_y, s);
         };
 
-        let refocus = |cl: &Vec<Client>, view: Point, foc: &mut libc::c_ulong, cfg: &config::Config| {
-            let next = cl.iter().rev().find(|c| c.pos == view && c.mapped).map(|c| c.window).unwrap_or(0);
-            set_focus(display, cl, next, foc, cfg, root_window, &atoms);
-        };
+        let refocus =
+            |cl: &Vec<Client>, view: Point, foc: &mut libc::c_ulong, cfg: &config::Config| {
+                let next = cl
+                    .iter()
+                    .rev()
+                    .find(|c| c.pos == view && c.mapped)
+                    .map(|c| c.window)
+                    .unwrap_or(0);
+                set_focus(display, cl, next, foc, cfg, root_window, &atoms);
+            };
 
         // ====================================================================
         // 7. EVENT LOOP
@@ -718,7 +1520,12 @@ fn main() {
             match event_type {
                 MAP_REQUEST => {
                     let win = event.xmaprequest.window;
-                    if clients.iter().any(|c| c.window == win) { continue; }
+                    if clients.iter().any(|c| c.window == win) {
+                        continue;
+                    }
+                    if let Some(comp) = compositor.borrow_mut().as_mut() {
+                        comp.watch_window(win);
+                    }
 
                     let mut actual_type = 0;
                     let mut actual_format = 0;
@@ -726,48 +1533,57 @@ fn main() {
                     let mut bytes_after = 0;
                     let mut prop_data: *mut u8 = ptr::null_mut();
 
-                    if XGetWindowProperty(display, win, atoms.net_wm_window_type, 0, 32, 0, XA_ATOM,
-                        &mut actual_type, &mut actual_format, &mut nitems, &mut bytes_after, &mut prop_data) == 0
+                    if XGetWindowProperty(
+                        display,
+                        win,
+                        atoms.net_wm_window_type,
+                        0,
+                        32,
+                        0,
+                        XA_ATOM,
+                        &mut actual_type,
+                        &mut actual_format,
+                        &mut nitems,
+                        &mut bytes_after,
+                        &mut prop_data,
+                    ) == 0
                         && !prop_data.is_null()
                     {
-                        let slice = std::slice::from_raw_parts(prop_data as *const libc::c_ulong, nitems as usize);
-                        let is_dock = slice.iter().any(|&a| a == atoms.net_wm_window_type_dock);
+                        let slice = std::slice::from_raw_parts(
+                            prop_data as *const libc::c_ulong,
+                            nitems as usize,
+                        );
+                        let is_dock = slice.contains(&atoms.net_wm_window_type_dock);
                         XFree(prop_data as *mut libc::c_void);
 
                         if is_dock {
                             dock_window.set(win);
-                            XSelectInput(display, win, PROPERTY_CHANGE_MASK | STRUCTURE_NOTIFY_MASK);
-                            if let Some(s) = read_struts(display, win, atoms.net_wm_strut_partial) { struts = s; }
+                            XSelectInput(
+                                display,
+                                win,
+                                PROPERTY_CHANGE_MASK | STRUCTURE_NOTIFY_MASK,
+                            );
+                            if let Some(s) = read_struts(display, win, atoms.net_wm_strut_partial) {
+                                struts = s;
+                            }
                             XMapWindow(display, win);
-                            tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);
+                            tile_layout(
+                                display,
+                                &mut clients,
+                                current_view,
+                                &active_config,
+                                &struts,
+                                cam_offset_x,
+                                cam_offset_y,
+                            );
                             continue;
                         }
                     }
 
                     XSelectInput(display, win, CLIENT_EVENT_MASK);
 
-                    let mut win_border_color = active_config.border_color;
-                    let mut win_border_width = active_config.border_width;
-                    let mut class_hint = XClassHint { res_name: ptr::null_mut(), res_class: ptr::null_mut() };
-
-                    if XGetClassHint(display, win, &mut class_hint) != 0 {
-                        if !class_hint.res_class.is_null() {
-                            if let Ok(class_name) = CStr::from_ptr(class_hint.res_class).to_str() {
-                                for rule in &active_config.window_rules {
-                                    if rule.selector_key == "class" && rule.selector_val == class_name {
-                                        if rule.property == "border_color" {
-                                            let clean = rule.value.strip_prefix("0x").unwrap_or(&rule.value);
-                                            if let Ok(v) = u64::from_str_radix(clean, 16) { win_border_color = v; }
-                                        } else if rule.property == "border_width" {
-                                            if let Ok(v) = rule.value.parse() { win_border_width = v; }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if !class_hint.res_name.is_null() { XFree(class_hint.res_name as *mut libc::c_void); }
-                        if !class_hint.res_class.is_null() { XFree(class_hint.res_class as *mut libc::c_void); }
-                    }
+                    let (win_border_color, win_border_width) =
+                        window_border_settings(display, win, &active_config);
 
                     XSetWindowBorderWidth(display, win, win_border_width);
                     XSetWindowBorder(display, win, win_border_color);
@@ -775,7 +1591,8 @@ fn main() {
                     cam_offset_x = 0;
                     cam_offset_y = 0;
 
-                    let (mux, muy, muw, muh) = monitor_usable_area_under_cursor(display, root_window, screen, &struts);
+                    let (mux, muy, muw, muh) =
+                        monitor_usable_area_under_cursor(display, root_window, screen, &struts);
 
                     clients.push(Client {
                         window: win,
@@ -785,9 +1602,9 @@ fn main() {
                         ignore_unmaps: 0,
                         border_color: win_border_color,
                         border_width: win_border_width,
-                        x: mux + 120, 
-                        y: muy + 120, 
-                        width: ((muw / 2).max(400)) as u32, 
+                        x: mux + 120,
+                        y: muy + 120,
+                        width: ((muw / 2).max(400)) as u32,
                         height: ((muh / 2).max(300)) as u32,
                         mux,
                         muy,
@@ -795,34 +1612,105 @@ fn main() {
                         muh,
                     });
 
-                    tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);
+                    animate_next_layout.set(true);
+                    tile_layout(
+                        display,
+                        &mut clients,
+                        current_view,
+                        &active_config,
+                        &struts,
+                        cam_offset_x,
+                        cam_offset_y,
+                    );
+                    animate_next_layout.set(false);
                     XSync(display, 0);
 
-                    XGrabButton(display, ANY_BUTTON, ANY_MODIFIER, win, 0, BUTTON_PRESS_MASK as libc::c_uint,
-                        GRAB_MODE_SYNC, GRAB_MODE_ASYNC, 0, 0);
-                    set_focus(display, &clients, win, &mut focused_window, &active_config, root_window, &atoms);
+                    XGrabButton(
+                        display,
+                        ANY_BUTTON,
+                        ANY_MODIFIER,
+                        win,
+                        0,
+                        BUTTON_PRESS_MASK as libc::c_uint,
+                        GRAB_MODE_SYNC,
+                        GRAB_MODE_ASYNC,
+                        0,
+                        0,
+                    );
+                    set_focus(
+                        display,
+                        &clients,
+                        win,
+                        &mut focused_window,
+                        &active_config,
+                        root_window,
+                        &atoms,
+                    );
+                }
+
+                MAP_NOTIFY => {
+                    let ev = event.xmap;
+                    if ev.event == root_window
+                        && let Some(comp) = compositor.borrow_mut().as_mut()
+                    {
+                        comp.watch_window(ev.window);
+                        comp.repaint();
+                    }
                 }
 
                 CONFIGURE_REQUEST => {
                     let ev = event.xconfigurerequest;
                     let mut ch = XWindowChanges {
-                        x: ev.x, y: ev.y, width: ev.width, height: ev.height,
-                        border_width: ev.border_width, sibling: ev.above, stack_mode: ev.detail,
+                        x: ev.x,
+                        y: ev.y,
+                        width: ev.width,
+                        height: ev.height,
+                        border_width: ev.border_width,
+                        sibling: ev.above,
+                        stack_mode: ev.detail,
                     };
                     match clients.iter().position(|c| c.window == ev.window) {
                         Some(i) if clients[i].floating => {
                             let bw2 = 2 * clients[i].border_width;
-                            if ev.value_mask & 1 != 0 { clients[i].x = ev.x - cam_offset_x; }
-                            if ev.value_mask & 2 != 0 { clients[i].y = ev.y - cam_offset_y; }
-                            if ev.value_mask & 4 != 0 { clients[i].width = ev.width as u32 + bw2; }
-                            if ev.value_mask & 8 != 0 { clients[i].height = ev.height as u32 + bw2; }
-                            apply_camera_viewport(display, &mut clients, current_view, cam_offset_x, cam_offset_y, &struts);
+                            if ev.value_mask & 1 != 0 {
+                                clients[i].x = ev.x - cam_offset_x;
+                            }
+                            if ev.value_mask & 2 != 0 {
+                                clients[i].y = ev.y - cam_offset_y;
+                            }
+                            if ev.value_mask & 4 != 0 {
+                                clients[i].width = ev.width as u32 + bw2;
+                            }
+                            if ev.value_mask & 8 != 0 {
+                                clients[i].height = ev.height as u32 + bw2;
+                            }
+                            apply_camera_viewport(
+                                display,
+                                &mut clients,
+                                current_view,
+                                cam_offset_x,
+                                cam_offset_y,
+                                &struts,
+                            );
                         }
                         Some(_) => {
-                            tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);
+                            tile_layout(
+                                display,
+                                &mut clients,
+                                current_view,
+                                &active_config,
+                                &struts,
+                                cam_offset_x,
+                                cam_offset_y,
+                            );
                         }
                         None => {
-                            XConfigureWindow(display, ev.window, (ev.value_mask & !16) as libc::c_uint, &mut ch);
+                            XConfigureWindow(
+                                display,
+                                ev.window,
+                                (ev.value_mask & !16) as libc::c_uint,
+                                &mut ch,
+                            );
                         }
                     }
                 }
@@ -830,7 +1718,11 @@ fn main() {
                 BUTTON_PRESS => {
                     let ev = event.xbutton;
                     let from_client_grab = ev.window != root_window;
-                    let target_win = if ev.window == root_window { ev.subwindow } else { ev.window };
+                    let target_win = if ev.window == root_window {
+                        ev.subwindow
+                    } else {
+                        ev.window
+                    };
                     let sup = ev.state & SUPER_MASK != 0;
                     let pure_state = ev.state & !(LOCK_MASK | MOD2_MASK);
                     let on_client = clients.iter().any(|c| c.window == target_win);
@@ -840,30 +1732,79 @@ fn main() {
                     } else if sup && (ev.button == 4 || ev.button == 5) {
                         let z = zoom.get();
                         let nz = if ev.button == 4 { z * 1.15 } else { z / 1.15 };
-                        zoom.set(nz.clamp(MIN_ZOOM, MAX_ZOOM));
-                        apply_camera_viewport(display, &mut clients, current_view, cam_offset_x, cam_offset_y, &struts);
+                        let target = nz.clamp(MIN_ZOOM, MAX_ZOOM);
+                        animate_zoom(
+                            z,
+                            target,
+                            compositor_config.animations,
+                            compositor_config.animation_duration_ms,
+                            |frame_zoom| {
+                                zoom.set(frame_zoom);
+                                apply_camera_viewport(
+                                    display,
+                                    &mut clients,
+                                    current_view,
+                                    cam_offset_x,
+                                    cam_offset_y,
+                                    &struts,
+                                );
+                            },
+                        );
                     } else if (sup && ev.button == 2)
-                        || (ev.window == root_window && !on_client && ev.button == 1 && pure_state == 0)
+                        || (ev.window == root_window
+                            && !on_client
+                            && ev.button == 1
+                            && pure_state == 0)
                     {
                         if grab_ptr(ev.time) {
-                            drag = Some(Drag::Pan { sx: ev.x_root, sy: ev.y_root, off_x: cam_offset_x, off_y: cam_offset_y });
+                            drag = Some(Drag::Pan {
+                                sx: ev.x_root,
+                                sy: ev.y_root,
+                                off_x: cam_offset_x,
+                                off_y: cam_offset_y,
+                            });
                         }
                     } else if let Some(c) = clients.iter().find(|c| c.window == target_win) {
                         if sup && ev.button == 1 {
                             if grab_ptr(ev.time) {
-                                drag = Some(Drag::Move { win: target_win, sx: ev.x_root, sy: ev.y_root, ox: c.x, oy: c.y });
+                                drag = Some(Drag::Move {
+                                    win: target_win,
+                                    sx: ev.x_root,
+                                    sy: ev.y_root,
+                                    ox: c.x,
+                                    oy: c.y,
+                                });
                             }
                         } else if sup && ev.button == 3 {
                             if grab_ptr(ev.time) {
-                                drag = Some(Drag::Resize { win: target_win, sx: ev.x_root, sy: ev.y_root, ow: c.width as i32, oh: c.height as i32 });
+                                drag = Some(Drag::Resize {
+                                    win: target_win,
+                                    sx: ev.x_root,
+                                    sy: ev.y_root,
+                                    ow: c.width as i32,
+                                    oh: c.height as i32,
+                                });
                             }
                         } else if !sup {
-                            set_focus(display, &clients, target_win, &mut focused_window, &active_config, root_window, &atoms);
+                            set_focus(
+                                display,
+                                &clients,
+                                target_win,
+                                &mut focused_window,
+                                &active_config,
+                                root_window,
+                                &atoms,
+                            );
                         }
                     }
 
                     if from_client_grab {
-                        XAllowEvents(display, REPLAY_POINTER, ev.time);
+                        let mode = if drag.is_some() {
+                            ASYNC_POINTER
+                        } else {
+                            REPLAY_POINTER
+                        };
+                        XAllowEvents(display, mode, ev.time);
                     }
                 }
 
@@ -872,31 +1813,81 @@ fn main() {
                     let z = zoom.get();
                     let (zcx, zcy) = zoom_center.get();
                     match drag {
-                        Some(Drag::Pan { sx, sy, off_x, off_y }) => {
+                        Some(Drag::Pan {
+                            sx,
+                            sy,
+                            off_x,
+                            off_y,
+                        }) => {
                             cam_offset_x = off_x + ((m.x_root - sx) as f32 / z) as i32;
                             cam_offset_y = off_y + ((m.y_root - sy) as f32 / z) as i32;
-                            apply_camera_viewport(display, &mut clients, current_view, cam_offset_x, cam_offset_y, &struts);
+                            apply_camera_viewport(
+                                display,
+                                &mut clients,
+                                current_view,
+                                cam_offset_x,
+                                cam_offset_y,
+                                &struts,
+                            );
                         }
-                        Some(Drag::Move { win, sx, sy, ox, oy }) => {
-                            let (_, _, uw, uh) = primary_usable_area(display, root_window, screen, &struts);
+                        Some(Drag::Move {
+                            win,
+                            sx,
+                            sy,
+                            ox,
+                            oy,
+                        }) => {
+                            let (_, _, uw, uh) =
+                                primary_usable_area(display, root_window, screen, &struts);
                             if let Some(c) = clients.iter_mut().find(|c| c.window == win) {
                                 c.x = ox + ((m.x_root - sx) as f32 / z) as i32;
                                 c.y = oy + ((m.y_root - sy) as f32 / z) as i32;
                                 let cdx = (c.pos.x - current_view.x) * uw;
                                 let cdy = (c.pos.y - current_view.y) * uh;
-                                let (rx, ry, rw, rh) = zoom_rect(c.x + cdx + cam_offset_x, c.y + cdy + cam_offset_y, c.width, c.height, z, zcx, zcy);
+                                let (rx, ry, rw, rh) = zoom_rect(
+                                    c.x + cdx + cam_offset_x,
+                                    c.y + cdy + cam_offset_y,
+                                    c.width,
+                                    c.height,
+                                    z,
+                                    zcx,
+                                    zcy,
+                                );
                                 resize_client(display, win, rx, ry, rw, rh, c.border_width);
                             }
+                            if let Some(comp) = compositor.borrow().as_ref() {
+                                comp.repaint();
+                            }
                         }
-                        Some(Drag::Resize { win, sx, sy, ow, oh }) => {
-                            let (_, _, uw, uh) = primary_usable_area(display, root_window, screen, &struts);
+                        Some(Drag::Resize {
+                            win,
+                            sx,
+                            sy,
+                            ow,
+                            oh,
+                        }) => {
+                            let (_, _, uw, uh) =
+                                primary_usable_area(display, root_window, screen, &struts);
                             if let Some(c) = clients.iter_mut().find(|c| c.window == win) {
-                                c.width  = (ow + ((m.x_root - sx) as f32 / z) as i32).max(120) as u32;
-                                c.height = (oh + ((m.y_root - sy) as f32 / z) as i32).max(80) as u32;
+                                c.width =
+                                    (ow + ((m.x_root - sx) as f32 / z) as i32).max(120) as u32;
+                                c.height =
+                                    (oh + ((m.y_root - sy) as f32 / z) as i32).max(80) as u32;
                                 let cdx = (c.pos.x - current_view.x) * uw;
                                 let cdy = (c.pos.y - current_view.y) * uh;
-                                let (rx, ry, rw, rh) = zoom_rect(c.x + cdx + cam_offset_x, c.y + cdy + cam_offset_y, c.width, c.height, z, zcx, zcy);
+                                let (rx, ry, rw, rh) = zoom_rect(
+                                    c.x + cdx + cam_offset_x,
+                                    c.y + cdy + cam_offset_y,
+                                    c.width,
+                                    c.height,
+                                    z,
+                                    zcx,
+                                    zcy,
+                                );
                                 resize_client(display, win, rx, ry, rw, rh, c.border_width);
+                            }
+                            if let Some(comp) = compositor.borrow().as_ref() {
+                                comp.repaint();
                             }
                         }
                         None => {}
@@ -906,7 +1897,8 @@ fn main() {
                 BUTTON_RELEASE => {
                     if let Some(d) = drag.take() {
                         XUngrabPointer(display, 0);
-                        let (ux, _uy, uw, uh) = primary_usable_area(display, root_window, screen, &struts);
+                        let (ux, _uy, uw, uh) =
+                            primary_usable_area(display, root_window, screen, &struts);
 
                         match d {
                             Drag::Pan { .. } => {
@@ -917,16 +1909,34 @@ fn main() {
                                     current_view.y += sy;
                                     cam_offset_x += sx * uw;
                                     cam_offset_y += sy * uh;
-                                    tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);
-                                    let still = clients.iter().any(|c| c.window == focused_window && c.pos == current_view && c.mapped);
+                                    tile_layout(
+                                        display,
+                                        &mut clients,
+                                        current_view,
+                                        &active_config,
+                                        &struts,
+                                        cam_offset_x,
+                                        cam_offset_y,
+                                    );
+                                    let still = clients.iter().any(|c| {
+                                        c.window == focused_window
+                                            && c.pos == current_view
+                                            && c.mapped
+                                    });
                                     if !still {
-                                        refocus(&clients, current_view, &mut focused_window, &active_config);
+                                        refocus(
+                                            &clients,
+                                            current_view,
+                                            &mut focused_window,
+                                            &active_config,
+                                        );
                                     }
                                 }
                             }
                             Drag::Move { win, .. } => {
                                 if let Some(i) = clients.iter().position(|c| c.window == win) {
-                                    let (_, uy, _, _) = primary_usable_area(display, root_window, screen, &struts);
+                                    let (_, uy, _, _) =
+                                        primary_usable_area(display, root_window, screen, &struts);
                                     let c = &mut clients[i];
                                     let lx = c.x + (c.pos.x - current_view.x) * uw;
                                     let ly = c.y + (c.pos.y - current_view.y) * uh;
@@ -937,14 +1947,30 @@ fn main() {
                                     c.x = lx - kx * uw;
                                     c.y = ly - ky * uh;
                                     c.floating = true;
-                                    tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);
+                                    tile_layout(
+                                        display,
+                                        &mut clients,
+                                        current_view,
+                                        &active_config,
+                                        &struts,
+                                        cam_offset_x,
+                                        cam_offset_y,
+                                    );
                                 }
                             }
                             Drag::Resize { win, .. } => {
                                 if let Some(c) = clients.iter_mut().find(|c| c.window == win) {
                                     c.floating = true;
                                 }
-                                tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);
+                                tile_layout(
+                                    display,
+                                    &mut clients,
+                                    current_view,
+                                    &active_config,
+                                    &struts,
+                                    cam_offset_x,
+                                    cam_offset_y,
+                                );
                             }
                         }
                     }
@@ -953,22 +1979,51 @@ fn main() {
                 PROPERTY_NOTIFY => {
                     let ev = event.xproperty;
                     let dock = dock_window.get();
-                    if dock != 0 && ev.window == dock && ev.atom == atoms.net_wm_strut_partial {
-                        if let Some(s) = read_struts(display, dock, atoms.net_wm_strut_partial) {
-                            struts = s;
-                            tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);
-                        }
+                    if dock != 0
+                        && ev.window == dock
+                        && ev.atom == atoms.net_wm_strut_partial
+                        && let Some(s) = read_struts(display, dock, atoms.net_wm_strut_partial)
+                    {
+                        struts = s;
+                        tile_layout(
+                            display,
+                            &mut clients,
+                            current_view,
+                            &active_config,
+                            &struts,
+                            cam_offset_x,
+                            cam_offset_y,
+                        );
                     }
                 }
 
                 UNMAP_NOTIFY => {
                     let ev = event.xunmap;
-                    if ev.event != ev.window { continue; }
                     let win = ev.window;
+                    if let Some(comp) = compositor.borrow_mut().as_mut() {
+                        comp.finish_unmap(win);
+                        comp.repaint();
+                    }
+                    if ev.event != ev.window {
+                        continue;
+                    }
                     if win == dock_window.get() {
                         dock_window.set(0);
-                        struts = Struts { top: 0, bottom: 0, left: 0, right: 0 };
-                        tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);
+                        struts = Struts {
+                            top: 0,
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                        };
+                        tile_layout(
+                            display,
+                            &mut clients,
+                            current_view,
+                            &active_config,
+                            &struts,
+                            cam_offset_x,
+                            cam_offset_y,
+                        );
                     }
                     if let Some(pos) = clients.iter().position(|c| c.window == win) {
                         if clients[pos].ignore_unmaps > 0 {
@@ -977,20 +2032,55 @@ fn main() {
                             clients.remove(pos);
                             if focused_window == win {
                                 focused_window = 0;
-                                refocus(&clients, current_view, &mut focused_window, &active_config);
+                                refocus(
+                                    &clients,
+                                    current_view,
+                                    &mut focused_window,
+                                    &active_config,
+                                );
                             }
-                            tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);
-                            update_ewmh_atoms(display, root_window, &clients, focused_window, &atoms);
+                            tile_layout(
+                                display,
+                                &mut clients,
+                                current_view,
+                                &active_config,
+                                &struts,
+                                cam_offset_x,
+                                cam_offset_y,
+                            );
+                            update_ewmh_atoms(
+                                display,
+                                root_window,
+                                &clients,
+                                focused_window,
+                                &atoms,
+                            );
                         }
                     }
                 }
 
                 DESTROY_NOTIFY => {
                     let win = event.xdestroywindow.window;
+                    if let Some(comp) = compositor.borrow_mut().as_mut() {
+                        comp.forget_window(win);
+                    }
                     if win == dock_window.get() {
                         dock_window.set(0);
-                        struts = Struts { top: 0, bottom: 0, left: 0, right: 0 };
-                        tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);
+                        struts = Struts {
+                            top: 0,
+                            bottom: 0,
+                            left: 0,
+                            right: 0,
+                        };
+                        tile_layout(
+                            display,
+                            &mut clients,
+                            current_view,
+                            &active_config,
+                            &struts,
+                            cam_offset_x,
+                            cam_offset_y,
+                        );
                     }
                     if let Some(pos) = clients.iter().position(|c| c.window == win) {
                         clients.remove(pos);
@@ -998,7 +2088,15 @@ fn main() {
                             focused_window = 0;
                             refocus(&clients, current_view, &mut focused_window, &active_config);
                         }
-                        tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);
+                        tile_layout(
+                            display,
+                            &mut clients,
+                            current_view,
+                            &active_config,
+                            &struts,
+                            cam_offset_x,
+                            cam_offset_y,
+                        );
                         update_ewmh_atoms(display, root_window, &clients, focused_window, &atoms);
                     }
                 }
@@ -1016,7 +2114,17 @@ fn main() {
                         match action.as_str() {
                             "killclient" => {
                                 if focused_window != 0 {
-                                    if supports_delete(display, focused_window, atoms.wm_delete_window) {
+                                    let animated_close =
+                                        if let Some(comp) = compositor.borrow_mut().as_mut() {
+                                            comp.animate_close(focused_window)
+                                        } else {
+                                            false
+                                        };
+                                    if supports_delete(
+                                        display,
+                                        focused_window,
+                                        atoms.wm_delete_window,
+                                    ) {
                                         let mut cm = XEvent::new();
                                         cm.type_ = 33;
                                         cm.xclient.window = focused_window;
@@ -1024,15 +2132,36 @@ fn main() {
                                         cm.xclient.format = 32;
                                         cm.xclient.data[0] = atoms.wm_delete_window;
                                         XSendEvent(display, focused_window, 0, 0, &mut cm);
+                                        if animated_close {
+                                            XSync(display, 0);
+                                            std::thread::sleep(std::time::Duration::from_millis(
+                                                90,
+                                            ));
+                                            if let Some(comp) = compositor.borrow_mut().as_mut()
+                                                && comp.is_viewable(focused_window)
+                                            {
+                                                comp.cancel_close(focused_window);
+                                            }
+                                        }
                                     } else {
                                         XKillClient(display, focused_window);
                                     }
                                 }
                             }
                             "togglefloating" => {
-                                if let Some(c) = clients.iter_mut().find(|c| c.window == focused_window) {
+                                if let Some(c) =
+                                    clients.iter_mut().find(|c| c.window == focused_window)
+                                {
                                     c.floating = !c.floating;
-                                    tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);
+                                    tile_layout(
+                                        display,
+                                        &mut clients,
+                                        current_view,
+                                        &active_config,
+                                        &struts,
+                                        cam_offset_x,
+                                        cam_offset_y,
+                                    );
                                 }
                             }
                             "toggleoverview" | "zoom_in" | "zoom_out" | "zoom_reset" => {
@@ -1041,17 +2170,137 @@ fn main() {
                                     "zoom_out" => z / 1.25,
                                     "zoom_in" => z * 1.25,
                                     "zoom_reset" => 1.0,
-                                    _ => if z < 1.0 { 1.0 } else { 0.4 },
+                                    _ => {
+                                        if z < 1.0 {
+                                            1.0
+                                        } else {
+                                            0.4
+                                        }
+                                    }
                                 };
-                                zoom.set(nz.clamp(MIN_ZOOM, MAX_ZOOM));
-                                tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);
+                                let target = nz.clamp(MIN_ZOOM, MAX_ZOOM);
+                                animate_zoom(
+                                    z,
+                                    target,
+                                    compositor_config.animations,
+                                    compositor_config.animation_duration_ms,
+                                    |frame_zoom| {
+                                        zoom.set(frame_zoom);
+                                        tile_layout(
+                                            display,
+                                            &mut clients,
+                                            current_view,
+                                            &active_config,
+                                            &struts,
+                                            cam_offset_x,
+                                            cam_offset_y,
+                                        );
+                                    },
+                                );
                             }
                             "reload_config" => match config::load_config(&config_path) {
                                 Ok(new_cfg) => {
                                     XUngrabKey(display, 0, ANY_MODIFIER, root_window);
                                     active_config = new_cfg;
-                                    register_bindings(display, root_window, &active_config, &mut precomputed_bindings);
-                                    tile_layout(display, &mut clients, current_view, &active_config, &struts, cam_offset_x, cam_offset_y);
+                                    compositor_config = match comp_config::load(
+                                        &compositor_config_path,
+                                    ) {
+                                        Ok(cfg) => cfg,
+                                        Err(error) => {
+                                            eprintln!(
+                                                "AetherWM compositor config reload error: {error}"
+                                            );
+                                            compositor_config.clone()
+                                        }
+                                    };
+                                    corner_radius.set(if compositor_config.enabled {
+                                        compositor_config.corner_radius
+                                    } else {
+                                        0
+                                    });
+                                    {
+                                        let mut slot = compositor.borrow_mut();
+                                        let should_run = compositor_config.enabled
+                                            && !external_compositor_configured;
+                                        match (
+                                            should_run,
+                                            slot.as_ref().map(|comp| comp.is_active()),
+                                        ) {
+                                            (false, Some(_)) => *slot = None,
+                                            (true, Some(true)) => {
+                                                if let Some(comp) = slot.as_mut() {
+                                                    comp.update_effects(&compositor_config);
+                                                }
+                                            }
+                                            (true, Some(false) | None) => {
+                                                *slot = None;
+                                                *slot = compositor::Compositor::start(
+                                                    display,
+                                                    root_window,
+                                                    screen,
+                                                    supporting_window,
+                                                    &compositor_config,
+                                                );
+                                            }
+                                            (false, None) => {}
+                                        }
+                                        if let Some(comp) = slot.as_mut() {
+                                            for client in
+                                                clients.iter().filter(|client| client.mapped)
+                                            {
+                                                comp.watch_window(client.window);
+                                            }
+                                            comp.repaint();
+                                        }
+                                    }
+                                    let old_warning = config_warning_window.replace(0);
+                                    if old_warning != 0 {
+                                        XDestroyWindow(display, old_warning);
+                                    }
+                                    let mut reload_warnings = active_config.warnings.clone();
+                                    reload_warnings.extend(compositor_config.warnings.clone());
+                                    config_warning_window.set(show_config_warning(
+                                        display,
+                                        root_window,
+                                        screen,
+                                        &reload_warnings,
+                                    ));
+                                    register_bindings(
+                                        display,
+                                        root_window,
+                                        &active_config,
+                                        &mut precomputed_bindings,
+                                    );
+                                    for client in clients.iter_mut() {
+                                        let (color, width) = window_border_settings(
+                                            display,
+                                            client.window,
+                                            &active_config,
+                                        );
+                                        client.border_color = color;
+                                        client.border_width = width;
+                                        XSetWindowBorderWidth(display, client.window, width);
+                                        XSetWindowBorder(display, client.window, color);
+                                    }
+                                    let focused = focused_window;
+                                    set_focus(
+                                        display,
+                                        &clients,
+                                        focused,
+                                        &mut focused_window,
+                                        &active_config,
+                                        root_window,
+                                        &atoms,
+                                    );
+                                    tile_layout(
+                                        display,
+                                        &mut clients,
+                                        current_view,
+                                        &active_config,
+                                        &struts,
+                                        cam_offset_x,
+                                        cam_offset_y,
+                                    );
                                     println!("AetherWM: config reloaded");
                                 }
                                 Err(e) => eprintln!("AetherWM config reload error: {}", e),
@@ -1067,8 +2316,23 @@ fn main() {
                                 current_view.y += dy;
                                 cam_offset_x = 0;
                                 cam_offset_y = 0;
-                                tile_layout(display, &mut clients, current_view, &active_config, &struts, 0, 0);
-                                refocus(&clients, current_view, &mut focused_window, &active_config);
+                                animate_next_layout.set(true);
+                                tile_layout(
+                                    display,
+                                    &mut clients,
+                                    current_view,
+                                    &active_config,
+                                    &struts,
+                                    0,
+                                    0,
+                                );
+                                animate_next_layout.set(false);
+                                refocus(
+                                    &clients,
+                                    current_view,
+                                    &mut focused_window,
+                                    &active_config,
+                                );
                             }
                             a if a.starts_with("exec ") => {
                                 let cmd = &a["exec ".len()..];
@@ -1080,6 +2344,23 @@ fn main() {
                 }
 
                 _ => {}
+            }
+
+            let opacity_changed = event_type == PROPERTY_NOTIFY
+                && compositor
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|comp| comp.is_opacity_property(event.xproperty.atom));
+            if (opacity_changed
+                || event_type == CONFIGURE_REQUEST
+                || event_type == DESTROY_NOTIFY
+                || compositor
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|comp| comp.is_damage_event(event_type)))
+                && let Some(comp) = compositor.borrow().as_ref()
+            {
+                comp.repaint();
             }
         }
     }

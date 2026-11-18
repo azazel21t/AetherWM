@@ -2,6 +2,22 @@
 name = "aetherwm"
 version = "2.1.0"
 edition = "2024"
+default-run = "aetherwm-wayland"
+autobins = false
 
 [dependencies]
 libc = "0.2"
+smithay = { version = "0.7", default-features = false, optional = true }
+
+[features]
+default = ["wayland-nested"]
+wayland-nested = ["dep:smithay", "smithay/backend_winit", "smithay/wayland_frontend"]
+
+[[bin]]
+name = "aetherwm-wayland"
+path = "src/wayland_main.rs"
+required-features = ["wayland-nested"]
+
+[[bin]]
+name = "aetherwm-x11"
+path = "src/main.rs"

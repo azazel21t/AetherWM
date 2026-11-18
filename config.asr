@@ -7,13 +7,13 @@
 # 1. VISUALS & GAPS
 # ----------------------------------------------------------------------------
 
-# Border width of managed windows in pixels
+# Legacy X11 border width; the current Wayland build does not draw borders.
 border_width = 2
 
-# Unfocused window border color (Hex format)
+# Legacy X11 unfocused border color (Hex format)
 border_color = 0x1f2335
 
-# Active/focused window border color (Tokyo Night blue accent by default)
+# Legacy X11 focused border color (Tokyo Night blue accent by default)
 focused_border_color = 0x7aa2f7
 
 # Spacing between tiled windows in a cell
@@ -28,15 +28,18 @@ master_ratio = 0.50
 # Default layout mode: "master_stack" or "floating"
 default_layout = "master_stack"
 
+# Synchronize nested compositor rendering to the display refresh rate.
+vsync = true
+
 
 # ----------------------------------------------------------------------------
 # 2. AUTOSTART COMMANDS
 # ----------------------------------------------------------------------------
 # Commands executed in the background when AetherWM boots up.
-# Perfect for wallpapers (feh), compositors (picom), or status bars.
+# The current Wayland build only supports native Wayland clients; X11 apps need XWayland.
+# Example: autostart = "kitty"
 
-autostart = "feh --bg-scale ~/.wallpaper.jpg &"
-autostart = "picom --config ~/.config/picom/picom.conf &"
+# autostart = "kitty"
 
 
 # ----------------------------------------------------------------------------
@@ -49,19 +52,16 @@ autostart = "picom --config ~/.config/picom/picom.conf &"
 #   - killclient      : Close the currently focused application window
 #   - reload_config   : Hot-reload this configuration file without restarting WM
 #   - togglefloating  : Switch the focused window between tiled and floating layouts
-#   - toggleoverview  : Zoom out to view the spatial canvas layout
-#   - zoom_in         : Scale the continuous canvas zoom in
-#   - zoom_out        : Scale the continuous canvas zoom out
-#   - zoom_reset      : Reset continuous zoom back to 100% (1.0)
-#   - matrix_left     : Pan camera viewport one cell to the left
-#   - matrix_right    : Pan camera viewport one cell to the right
-#   - matrix_up       : Pan camera viewport one cell up
-#   - matrix_down     : Pan camera viewport one cell down
+#   - toggleoverview  : Show or hide the Wayland thumbnail overview
+#   - zoom_in/out     : Adjust the Wayland master ratio; legacy X11 uses canvas zoom
+#   - zoom_reset      : Reset the Wayland master ratio; legacy X11 resets canvas zoom
+#   - matrix_*        : Switch matrix workspaces on Wayland; pan the canvas on legacy X11
 #   - exec <command>  : Launch any shell command or program
 
 # --- Application Launchers ---
 bind Mod4 + Return -> exec kitty
-bind Mod4 + d      -> exec rofi -show drun
+# Uncomment only if a compatible Wayland launcher is installed:
+# bind Mod4 + d -> exec your-launcher
 
 # --- Window & Session Management ---
 bind Mod4 + q             -> killclient
@@ -82,7 +82,7 @@ bind Mod4 + j -> matrix_down
 
 
 # ----------------------------------------------------------------------------
-# 4. WINDOW RULES TUTORIAL
+# 4. LEGACY X11 WINDOW RULES
 # ----------------------------------------------------------------------------
 # Syntax: rule <selector_key>: "<selector_val>" -> <property> = <value>
 # Supported selectors: class (Window class name from XClassHint)

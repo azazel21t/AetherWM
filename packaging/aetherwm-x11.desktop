@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=AetherWM (X11)
+Comment=AetherWM X11 window manager
+Exec=aetherwm-x11
+TryExec=aetherwm-x11
+Type=Application
+DesktopNames=AetherWM

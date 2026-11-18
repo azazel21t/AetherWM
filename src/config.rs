@@ -30,9 +30,11 @@ pub struct Config {
     pub outer_gap: u32,
     pub master_ratio: f32,
     pub default_layout: String,
+    pub vsync: bool,
     pub autostart: Vec<String>,
     pub bindings: Vec<Binding>,
     pub window_rules: Vec<WindowRule>,
+    pub warnings: Vec<String>,
 }
 
 fn b(mods: &[&str], key: &str, action: &str) -> Binding {
@@ -53,6 +55,7 @@ impl Default for Config {
             outer_gap: 14,
             master_ratio: 0.50,
             default_layout: "master_stack".to_string(),
+            vsync: true,
             autostart: Vec::new(),
             bindings: vec![
                 b(&["Mod4"], "q", "killclient"),
@@ -70,6 +73,7 @@ impl Default for Config {
                 b(&["Mod4"], "d", "exec rofi -show drun"),
             ],
             window_rules: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 }
@@ -97,6 +101,12 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
                 if !cmd.is_empty() {
                     config.autostart.push(cmd.to_string());
                 }
+            } else {
+                warn(
+                    &mut config,
+                    line_num,
+                    &format!("Malformed autostart setting: '{}'", trimmed),
+                );
             }
             continue;
         }
@@ -116,7 +126,11 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
                     continue;
                 }
             }
-            warn(line_num, &format!("Malformed keybinding: '{}'", trimmed));
+            warn(
+                &mut config,
+                line_num,
+                &format!("Malformed keybinding: '{}'", trimmed),
+            );
             continue;
         }
 
@@ -137,7 +151,11 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
                     continue;
                 }
             }
-            warn(line_num, &format!("Malformed window rule: '{}'", trimmed));
+            warn(
+                &mut config,
+                line_num,
+                &format!("Malformed window rule: '{}'", trimmed),
+            );
             continue;
         }
 
@@ -147,23 +165,100 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
             let val = val.trim().trim_matches('"').trim_matches('\'');
             let hex = |s: &str| u64::from_str_radix(s.strip_prefix("0x").unwrap_or(s), 16).ok();
             match key {
-                "border_width" => { if let Ok(v) = val.parse() { config.border_width = v; } }
-                "border_color" => { if let Some(v) = hex(val) { config.border_color = v; } }
-                "focused_border_color" => { if let Some(v) = hex(val) { config.focused_border_color = v; } }
-                "inner_gap" => { if let Ok(v) = val.parse() { config.inner_gap = v; } }
-                "outer_gap" => { if let Ok(v) = val.parse() { config.outer_gap = v; } }
-                "master_ratio" => { if let Ok(v) = val.parse() { config.master_ratio = v; } }
-                "default_layout" => { config.default_layout = val.to_string(); }
-                _ => warn(line_num, &format!("Unknown configuration key: '{}'", key)),
+                "border_width" => match val.parse() {
+                    Ok(v) if v <= u16::MAX as u32 => config.border_width = v,
+                    Err(_) => warn(&mut config, line_num, "Invalid value for 'border_width'"),
+                    _ => warn(
+                        &mut config,
+                        line_num,
+                        "'border_width' must be between 0 and 65535",
+                    ),
+                },
+                "border_color" => match hex(val) {
+                    Some(v) if v <= u32::MAX as u64 => config.border_color = v,
+                    None => warn(
+                        &mut config,
+                        line_num,
+                        "Invalid hex value for 'border_color'",
+                    ),
+                    _ => warn(
+                        &mut config,
+                        line_num,
+                        "'border_color' must fit in an X11 pixel value",
+                    ),
+                },
+                "focused_border_color" => match hex(val) {
+                    Some(v) if v <= u32::MAX as u64 => config.focused_border_color = v,
+                    None => warn(
+                        &mut config,
+                        line_num,
+                        "Invalid hex value for 'focused_border_color'",
+                    ),
+                    _ => warn(
+                        &mut config,
+                        line_num,
+                        "'focused_border_color' must fit in an X11 pixel value",
+                    ),
+                },
+                "inner_gap" => match val.parse() {
+                    Ok(v) if v <= u16::MAX as u32 => config.inner_gap = v,
+                    Err(_) => warn(&mut config, line_num, "Invalid value for 'inner_gap'"),
+                    _ => warn(
+                        &mut config,
+                        line_num,
+                        "'inner_gap' must be between 0 and 65535",
+                    ),
+                },
+                "outer_gap" => match val.parse() {
+                    Ok(v) if v <= u16::MAX as u32 => config.outer_gap = v,
+                    Err(_) => warn(&mut config, line_num, "Invalid value for 'outer_gap'"),
+                    _ => warn(
+                        &mut config,
+                        line_num,
+                        "'outer_gap' must be between 0 and 65535",
+                    ),
+                },
+                "master_ratio" => match val.parse() {
+                    Ok(v) if (0.1..=0.9).contains(&v) => config.master_ratio = v,
+                    _ => warn(
+                        &mut config,
+                        line_num,
+                        "'master_ratio' must be between 0.1 and 0.9",
+                    ),
+                },
+                "default_layout" => match val {
+                    "master_stack" | "floating" => config.default_layout = val.to_string(),
+                    _ => warn(
+                        &mut config,
+                        line_num,
+                        "'default_layout' must be 'master_stack' or 'floating'",
+                    ),
+                },
+                "vsync" => match val {
+                    "true" => config.vsync = true,
+                    "false" => config.vsync = false,
+                    _ => warn(&mut config, line_num, "'vsync' must be 'true' or 'false'"),
+                },
+                _ => warn(
+                    &mut config,
+                    line_num,
+                    &format!("Unknown configuration key: '{}'", key),
+                ),
             }
         } else {
-            warn(line_num, &format!("Unrecognised line: '{}'", trimmed));
+            warn(
+                &mut config,
+                line_num,
+                &format!("Unrecognised line: '{}'", trimmed),
+            );
         }
     }
 
     Ok(config)
 }
 
-fn warn(line: usize, msg: &str) {
-    eprintln!("AetherWM Config Warning [line {}]: {}", line, msg);
+fn warn(config: &mut Config, line: usize, msg: &str) {
+    let warning = format!("AetherWM keyword issue [line {}]: {}", line, msg);
+    eprintln!("{}", warning);
+    config.warnings.push(warning);
 }
