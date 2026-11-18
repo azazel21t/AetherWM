@@ -13,6 +13,8 @@
 </div>
 
 ---
+*Transferring to Wayland Today!*
+---
 
 ## 🌌 What is AetherWM?
 
