@@ -269,14 +269,14 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
             let boxes = super::window_boxes(&compositor, &surfaces);
             let elements = surfaces
                 .iter()
-                .zip(boxes)
+                .zip(boxes.iter().copied())
                 .flat_map(|(surface, (x, y, _, _))| {
                     render_elements_from_surface_tree(
                         &mut renderer,
                         surface.wl_surface(),
                         (x, y),
                         1.0,
-                        1.0,
+                        compositor.config.window_opacity as f32 / 100.0,
                         Kind::Unspecified,
                     )
                 })
@@ -285,6 +285,12 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
             frame.clear(Color32F::new(0.035, 0.045, 0.07, 1.0), &[damage])?;
             draw_render_elements(&mut frame, 1.0, &elements, &[damage])
                 .map_err(|error| std::io::Error::other(format!("render surfaces: {error:?}")))?;
+            super::draw_window_decorations(
+                &mut frame,
+                &compositor.config,
+                &boxes,
+                compositor.focused_index,
+            )?;
             let cursor_x = compositor.pointer_location.x.round() as i32;
             let cursor_y = compositor.pointer_location.y.round() as i32;
             for (row, width) in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 10, 7, 5, 4]

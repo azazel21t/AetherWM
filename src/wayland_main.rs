@@ -15,14 +15,15 @@ use smithay::backend::input::{
     AbsolutePositionEvent, ButtonState, Event, InputEvent, KeyboardKeyEvent, PointerButtonEvent,
 };
 #[cfg(feature = "wayland-nested")]
+use smithay::backend::renderer::Renderer;
+#[cfg(feature = "wayland-nested")]
 use smithay::backend::renderer::element::surface::{
     WaylandSurfaceRenderElement, render_elements_from_surface_tree,
 };
 #[cfg(feature = "wayland-nested")]
 use smithay::backend::renderer::utils::draw_render_elements;
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
-#[cfg(feature = "wayland-nested")]
-use smithay::backend::renderer::{Color32F, Frame, Renderer};
+use smithay::backend::renderer::{Color32F, Frame};
 #[cfg(feature = "wayland-nested")]
 use smithay::backend::renderer::{element::Kind, gles::GlesRenderer};
 #[cfg(feature = "wayland-nested")]
@@ -47,9 +48,10 @@ use smithay::reexports::wayland_server::{
 use smithay::reexports::wayland_server::{Display, ListeningSocket};
 #[cfg(feature = "wayland-nested")]
 use smithay::reexports::winit as smithay_winit;
-use smithay::utils::{Logical, Point, Serial, Size};
+use smithay::utils::Rectangle;
 #[cfg(feature = "wayland-nested")]
-use smithay::utils::{Rectangle, Transform};
+use smithay::utils::Transform;
+use smithay::utils::{Logical, Point, Serial, Size};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
     CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes, TraversalAction,
@@ -404,12 +406,14 @@ fn run_nested() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 } else {
                     let focus = surface_at(&compositor, location);
-                    if let Some((surface, _)) = focus.as_ref()
-                        && let Some(index) = visible_surfaces(&compositor)
-                            .iter()
-                            .position(|candidate| candidate.wl_surface() == surface)
-                    {
-                        compositor.focused_index = index;
+                    if compositor.config.focus_follows_mouse {
+                        if let Some((surface, _)) = focus.as_ref()
+                            && let Some(index) = visible_surfaces(&compositor)
+                                .iter()
+                                .position(|candidate| candidate.wl_surface() == surface)
+                        {
+                            compositor.focused_index = index;
+                        }
                     }
                     let time = event.time() as u32;
                     let serial = next_serial(&mut compositor);
@@ -425,8 +429,10 @@ fn run_nested() -> Result<(), Box<dyn std::error::Error>> {
                         );
                         pointer.frame(&mut compositor);
                     }
-                    if let Some((surface, _)) = focus {
-                        keyboard.set_focus(&mut compositor, Some(surface), serial);
+                    if compositor.config.focus_follows_mouse {
+                        if let Some((surface, _)) = focus {
+                            keyboard.set_focus(&mut compositor, Some(surface), serial);
+                        }
                     }
                 }
                 compositor.needs_redraw = true;
@@ -598,14 +604,14 @@ fn run_nested() -> Result<(), Box<dyn std::error::Error>> {
             let boxes = window_boxes(&compositor, &surfaces);
             let elements = surfaces
                 .iter()
-                .zip(boxes)
+                .zip(boxes.iter().copied())
                 .flat_map(|(surface, (x, y, _, _))| {
                     render_elements_from_surface_tree(
                         renderer,
                         surface.wl_surface(),
                         (x, y),
                         1.0,
-                        1.0,
+                        compositor.config.window_opacity as f32 / 100.0,
                         Kind::Unspecified,
                     )
                 })
@@ -614,6 +620,12 @@ fn run_nested() -> Result<(), Box<dyn std::error::Error>> {
             frame.clear(Color32F::new(0.035, 0.045, 0.07, 1.0), &[damage])?;
             draw_render_elements(&mut frame, 1.0, &elements, &[damage])
                 .map_err(|error| std::io::Error::other(format!("render surfaces: {error:?}")))?;
+            draw_window_decorations(
+                &mut frame,
+                &compositor.config,
+                &boxes,
+                compositor.focused_index,
+            )?;
             let _ = frame.finish()?;
 
             let frame_time = start.elapsed().as_millis() as u32;
@@ -707,6 +719,59 @@ fn tile_boxes(
         ));
     }
     boxes
+}
+
+pub(crate) fn draw_window_decorations<F: Frame>(
+    frame: &mut F,
+    config: &config::Config,
+    boxes: &[(i32, i32, i32, i32)],
+    focused_index: usize,
+) -> Result<(), F::Error> {
+    let rgb = |value: u64| {
+        Color32F::new(
+            ((value >> 16) & 0xff) as f32 / 255.0,
+            ((value >> 8) & 0xff) as f32 / 255.0,
+            (value & 0xff) as f32 / 255.0,
+            1.0,
+        )
+    };
+    let background = Color32F::new(0.035, 0.045, 0.07, 1.0);
+    let border = config.border_width.min(32) as i32;
+    let radius = config.corner_radius.min(48) as i32;
+    for (index, &(x, y, width, height)) in boxes.iter().enumerate() {
+        if border > 0 {
+            let color = rgb(if index == focused_index {
+                config.focused_border_color
+            } else {
+                config.border_color
+            });
+            let b = border.min(width / 2).min(height / 2).max(0);
+            for (rx, ry, rw, rh) in [
+                (x, y, width, b),
+                (x, y + height - b, width, b),
+                (x, y + b, b, (height - 2 * b).max(0)),
+                (x + width - b, y + b, b, (height - 2 * b).max(0)),
+            ] {
+                frame.clear(color, &[Rectangle::new((rx, ry).into(), (rw, rh).into())])?;
+            }
+        }
+        // Mask corner pixels with the desktop background. This works best with gaps.
+        let r = radius.min(width / 2).min(height / 2);
+        for dy in 0..r {
+            let inset = r - ((r * r - (r - dy) * (r - dy)).max(0) as f64).sqrt().floor() as i32;
+            for row_y in [y + dy, y + height - 1 - dy] {
+                if inset > 0 {
+                    for (rx, rw) in [(x, inset), (x + width - inset, inset)] {
+                        frame.clear(
+                            background,
+                            &[Rectangle::new((rx, row_y).into(), (rw, 1).into())],
+                        )?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn binding_modifiers_match(

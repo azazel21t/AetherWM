@@ -80,7 +80,7 @@ The default bindings are read from `config.ars` or `config.asr`. A config file's
 | Move floating window | `Super + Left-drag` |
 | Resize floating window | `Super + Right-drag` |
 
-The Wayland build currently uses gaps, `master_ratio`, `default_layout`, bindings, and autostart commands. `vsync` controls the nested renderer; native DRM presentation follows the display's page-flip timing. Border settings and window rules are still X11-only. Autostart and `exec` commands run with the AetherWM Wayland socket selected and `DISPLAY` removed; X11-only apps need XWayland support, which has not been added yet.
+The Wayland build uses border width and colors, optional corner radius, window opacity, focus-follows-mouse, gaps, `master_ratio`, `default_layout`, bindings, and autostart commands. Rounded corners are currently masked using the desktop background color, so use them with gaps and a solid background. `vsync` controls the nested renderer; native DRM presentation follows the display's page-flip timing. Window rules remain X11-only. Autostart and `exec` commands run with the AetherWM Wayland socket selected and `DISPLAY` removed; X11-only apps need XWayland support, which has not been added yet.
 
 ---
 
@@ -108,6 +108,12 @@ The Wayland target reads `config.ars` (or `config.asr` as a fallback). In nested
 ```text
 outer_gap = 14
 inner_gap = 10
+border_width = 2
+border_color = 0x1f2335
+focused_border_color = 0x7aa2f7
+corner_radius = 0
+window_opacity = 100
+focus_follows_mouse = true
 master_ratio = 0.50
 default_layout = "master_stack"
 vsync = true

@@ -26,6 +26,9 @@ pub struct Config {
     pub border_width: u32,
     pub border_color: u64,
     pub focused_border_color: u64,
+    pub corner_radius: u32,
+    pub window_opacity: u32,
+    pub focus_follows_mouse: bool,
     pub inner_gap: u32,
     pub outer_gap: u32,
     pub master_ratio: f32,
@@ -51,6 +54,9 @@ impl Default for Config {
             border_width: 1,
             border_color: 0x1f2335,
             focused_border_color: 0x7aa2f7,
+            corner_radius: 0,
+            window_opacity: 100,
+            focus_follows_mouse: true,
             inner_gap: 10,
             outer_gap: 14,
             master_ratio: 0.50,
@@ -199,6 +205,31 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
                         &mut config,
                         line_num,
                         "'focused_border_color' must fit in an X11 pixel value",
+                    ),
+                },
+                "corner_radius" => match val.parse() {
+                    Ok(v) if v <= 48 => config.corner_radius = v,
+                    _ => warn(
+                        &mut config,
+                        line_num,
+                        "'corner_radius' must be between 0 and 48",
+                    ),
+                },
+                "window_opacity" => match val.parse() {
+                    Ok(v) if (20..=100).contains(&v) => config.window_opacity = v,
+                    _ => warn(
+                        &mut config,
+                        line_num,
+                        "'window_opacity' must be between 20 and 100",
+                    ),
+                },
+                "focus_follows_mouse" => match val {
+                    "true" => config.focus_follows_mouse = true,
+                    "false" => config.focus_follows_mouse = false,
+                    _ => warn(
+                        &mut config,
+                        line_num,
+                        "'focus_follows_mouse' must be 'true' or 'false'",
                     ),
                 },
                 "inner_gap" => match val.parse() {

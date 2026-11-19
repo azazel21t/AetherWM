@@ -7,14 +7,23 @@
 # 1. VISUALS & GAPS
 # ----------------------------------------------------------------------------
 
-# Legacy X11 border width; the current Wayland build does not draw borders.
+# Width of the Wayland window border (0 disables borders).
 border_width = 2
 
-# Legacy X11 unfocused border color (Hex format)
+# Unfocused border color (Hex format)
 border_color = 0x1f2335
 
-# Legacy X11 focused border color (Tokyo Night blue accent by default)
+# Focused border color (Tokyo Night blue accent by default)
 focused_border_color = 0x7aa2f7
+
+# Optional rounded window corners (0 to 48 pixels; best with gaps).
+corner_radius = 0
+
+# Surface opacity percentage (20 to 100).
+window_opacity = 100
+
+# Move keyboard focus when the pointer enters a window.
+focus_follows_mouse = true
 
 # Spacing between tiled windows in a cell
 inner_gap = 10

@@ -27,7 +27,6 @@ wayland-nested = ["dep:smithay", "smithay/backend_winit", "smithay/wayland_front
 [[bin]]
 name = "aetherwm-wayland"
 path = "src/wayland_main.rs"
-required-features = ["wayland-tty"]
 
 [[bin]]
 name = "aetherwm-x11"
