@@ -13,6 +13,8 @@
 </div>
 
 ---
+*Transferring to Wayland Today!*
+---
 
 ## 🌌 What is AetherWM?
 
@@ -106,29 +108,37 @@ The Wayland target reads `config.ars` (or `config.asr` as a fallback). In nested
 
 ### Sample Configuration (`config.ars`)
 ```text
-outer_gap = 14
-inner_gap = 10
+# AetherWM Configuration Template
+
 border_width = 2
 border_color = 0x1f2335
 focused_border_color = 0x7aa2f7
 corner_radius = 0
 window_opacity = 100
 focus_follows_mouse = true
+inner_gap = 10
+outer_gap = 14
 master_ratio = 0.50
 default_layout = "master_stack"
 vsync = true
 
-# Autostart native Wayland clients; XWayland is not available yet.
-# autostart = "kitty"
 bind Mod4 + Return -> exec kitty
+bind Mod4 + d -> exec wofi --show drun --normal-window
+bind Mod4 + q -> killclient
 bind Mod4 + r -> reload_config
+bind Mod4 + Shift + space -> togglefloating
+bind Mod4 + Shift + Escape -> exit
+bind Mod4 + p -> toggleoverview
+bind Mod4 + minus -> zoom_out
+bind Mod4 + equal -> zoom_in
+bind Mod4 + 0 -> zoom_reset
 bind Mod4 + h -> matrix_left
 bind Mod4 + l -> matrix_right
-bind Mod4 + equal -> zoom_in
-bind Mod4 + minus -> zoom_out
+bind Mod4 + k -> matrix_up
+bind Mod4 + j -> matrix_down
 ```
 
-The legacy X11 target's `comp.conf` controls its compositor effects:
+Legacy X11 `comp.conf`:
 
 ```text
 enabled = true
