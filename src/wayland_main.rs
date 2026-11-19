@@ -2,7 +2,7 @@
 
 use std::os::unix::io::OwnedFd;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Child, Command};
 #[cfg(feature = "wayland-nested")]
 use std::sync::Arc;
 #[cfg(feature = "wayland-nested")]
@@ -104,9 +104,18 @@ struct Compositor {
     surface_views: Vec<(WlSurface, (i32, i32))>,
     floating_surfaces: Vec<WlSurface>,
     floating_rects: Vec<(WlSurface, (i32, i32, i32, i32))>,
+    configured_sizes: Vec<(WlSurface, (i32, i32))>,
     focused_index: usize,
     overview: bool,
     drag: Option<DragState>,
+    pan_drag: Option<PanDragState>,
+    pan_offset: (f64, f64),
+    children: Vec<LaunchedCommand>,
+}
+
+pub(crate) struct LaunchedCommand {
+    command: String,
+    child: Child,
 }
 
 #[derive(Clone, Copy)]
@@ -122,6 +131,13 @@ struct DragState {
     kind: DragKind,
     start: Point<f64, Logical>,
     initial_rect: (i32, i32, i32, i32),
+}
+
+#[derive(Clone, Copy)]
+struct PanDragState {
+    button: u32,
+    start: Point<f64, Logical>,
+    initial_offset: (f64, f64),
 }
 
 impl BufferHandler for Compositor {
@@ -317,9 +333,13 @@ fn run_nested() -> Result<(), Box<dyn std::error::Error>> {
         surface_views: Vec::new(),
         floating_surfaces: Vec::new(),
         floating_rects: Vec::new(),
+        configured_sizes: Vec::new(),
         focused_index: 0,
         overview: false,
         drag: None,
+        pan_drag: None,
+        pan_offset: (0.0, 0.0),
+        children: Vec::new(),
     };
 
     let keyboard = compositor.seat.add_keyboard(Default::default(), 200, 200)?;
@@ -333,10 +353,13 @@ fn run_nested() -> Result<(), Box<dyn std::error::Error>> {
     let mut clients = Vec::new();
     eprintln!("AetherWM Wayland compositor listening on wayland-aetherwm");
     for command in &compositor.config.autostart {
-        spawn_client_command(command);
+        if let Some(child) = spawn_client_command(command) {
+            compositor.children.push(child);
+        }
     }
 
     loop {
+        reap_children(&mut compositor.children);
         let status = event_loop.dispatch_new_events(|event| match event {
             WinitEvent::Input(InputEvent::Keyboard { event }) => {
                 let key_state = event.state();
@@ -377,61 +400,65 @@ fn run_nested() -> Result<(), Box<dyn std::error::Error>> {
                     compositor.output_size.0.max(1),
                     compositor.output_size.1.max(1),
                 ));
-                compositor.pointer_location = location;
-                if let Some(drag) = compositor.drag.clone() {
-                    let dx = (location.x - drag.start.x).round() as i32;
-                    let dy = (location.y - drag.start.y).round() as i32;
-                    let rect = match drag.kind {
-                        DragKind::Move => (
-                            drag.initial_rect.0 + dx,
-                            drag.initial_rect.1 + dy,
-                            drag.initial_rect.2,
-                            drag.initial_rect.3,
-                        ),
-                        DragKind::Resize => (
-                            drag.initial_rect.0,
-                            drag.initial_rect.1,
-                            (drag.initial_rect.2 + dx).max(100),
-                            (drag.initial_rect.3 + dy).max(64),
-                        ),
-                    };
-                    let output_size = compositor.output_size;
-                    store_floating_rect(
-                        &mut compositor,
-                        &drag.surface,
-                        clamp_rect(rect, output_size),
-                    );
-                    if matches!(drag.kind, DragKind::Resize) {
-                        compositor.layout_dirty = true;
-                    }
+                if compositor.pan_drag.is_some() {
+                    update_pan(&mut compositor, location);
                 } else {
-                    let focus = surface_at(&compositor, location);
-                    if compositor.config.focus_follows_mouse {
-                        if let Some((surface, _)) = focus.as_ref()
-                            && let Some(index) = visible_surfaces(&compositor)
-                                .iter()
-                                .position(|candidate| candidate.wl_surface() == surface)
-                        {
-                            compositor.focused_index = index;
-                        }
-                    }
-                    let time = event.time() as u32;
-                    let serial = next_serial(&mut compositor);
-                    if let Some(pointer) = compositor.seat.get_pointer() {
-                        pointer.motion(
+                    compositor.pointer_location = location;
+                    if let Some(drag) = compositor.drag.clone() {
+                        let dx = (location.x - drag.start.x).round() as i32;
+                        let dy = (location.y - drag.start.y).round() as i32;
+                        let rect = match drag.kind {
+                            DragKind::Move => (
+                                drag.initial_rect.0 + dx,
+                                drag.initial_rect.1 + dy,
+                                drag.initial_rect.2,
+                                drag.initial_rect.3,
+                            ),
+                            DragKind::Resize => (
+                                drag.initial_rect.0,
+                                drag.initial_rect.1,
+                                (drag.initial_rect.2 + dx).max(100),
+                                (drag.initial_rect.3 + dy).max(64),
+                            ),
+                        };
+                        let output_size = compositor.output_size;
+                        store_floating_rect(
                             &mut compositor,
-                            focus.clone(),
-                            &MotionEvent {
-                                location,
-                                serial,
-                                time,
-                            },
+                            &drag.surface,
+                            clamp_rect(rect, output_size),
                         );
-                        pointer.frame(&mut compositor);
-                    }
-                    if compositor.config.focus_follows_mouse {
-                        if let Some((surface, _)) = focus {
-                            keyboard.set_focus(&mut compositor, Some(surface), serial);
+                        if matches!(drag.kind, DragKind::Resize) {
+                            compositor.layout_dirty = true;
+                        }
+                    } else {
+                        let focus = surface_at(&compositor, location);
+                        if compositor.config.focus_follows_mouse {
+                            if let Some((surface, _)) = focus.as_ref()
+                                && let Some(index) = visible_surfaces(&compositor)
+                                    .iter()
+                                    .position(|candidate| candidate.wl_surface() == surface)
+                            {
+                                compositor.focused_index = index;
+                            }
+                        }
+                        let time = event.time() as u32;
+                        let serial = next_serial(&mut compositor);
+                        if let Some(pointer) = compositor.seat.get_pointer() {
+                            pointer.motion(
+                                &mut compositor,
+                                focus.clone(),
+                                &MotionEvent {
+                                    location,
+                                    serial,
+                                    time,
+                                },
+                            );
+                            pointer.frame(&mut compositor);
+                        }
+                        if compositor.config.focus_follows_mouse {
+                            if let Some((surface, _)) = focus {
+                                keyboard.set_focus(&mut compositor, Some(surface), serial);
+                            }
                         }
                     }
                 }
@@ -440,7 +467,22 @@ fn run_nested() -> Result<(), Box<dyn std::error::Error>> {
             WinitEvent::Input(InputEvent::PointerButton { event }) => {
                 let button_code = event.button_code();
                 let button_state = event.state();
-                if let Some(drag) = compositor.drag.clone() {
+                let super_held = keyboard.modifier_state().logo;
+                if button_state == ButtonState::Released && finish_pan(&mut compositor, button_code)
+                {
+                    let first = visible_surfaces(&compositor)
+                        .first()
+                        .map(|surface| surface.wl_surface().clone());
+                    let serial = next_serial(&mut compositor);
+                    keyboard.set_focus(&mut compositor, first, serial);
+                } else if button_state == ButtonState::Pressed
+                    && ((super_held && button_code == 0x112)
+                        || (!super_held
+                            && button_code == 0x110
+                            && surface_at(&compositor, compositor.pointer_location).is_none()))
+                {
+                    begin_pan(&mut compositor, button_code);
+                } else if let Some(drag) = compositor.drag.clone() {
                     if button_state == ButtonState::Released && button_code == drag.button {
                         compositor.drag = None;
                     }
@@ -554,6 +596,15 @@ fn run_nested() -> Result<(), Box<dyn std::error::Error>> {
 
         display.dispatch_clients(&mut compositor)?;
         let current_surfaces = compositor.xdg_shell_state.toplevel_surfaces();
+        let closed_surface = compositor.surface_views.iter().any(|(known, _)| {
+            !current_surfaces
+                .iter()
+                .any(|surface| surface.wl_surface() == known)
+        });
+        if closed_surface {
+            compositor.layout_dirty = true;
+            compositor.needs_redraw = true;
+        }
         compositor.surface_views.retain(|(known, _)| {
             current_surfaces
                 .iter()
@@ -565,6 +616,11 @@ fn run_nested() -> Result<(), Box<dyn std::error::Error>> {
                 .any(|surface| surface.wl_surface() == known)
         });
         compositor.floating_rects.retain(|(known, _)| {
+            current_surfaces
+                .iter()
+                .any(|surface| surface.wl_surface() == known)
+        });
+        compositor.configured_sizes.retain(|(known, _)| {
             current_surfaces
                 .iter()
                 .any(|surface| surface.wl_surface() == known)
@@ -587,10 +643,7 @@ fn run_nested() -> Result<(), Box<dyn std::error::Error>> {
             let boxes = window_boxes(&compositor, &surfaces);
             for (surface, (_, _, width, height)) in surfaces.iter().zip(boxes) {
                 compositor.output.enter(surface.wl_surface());
-                surface.with_pending_state(|state| {
-                    state.size = Some(Size::<i32, Logical>::new(width, height));
-                });
-                surface.send_configure();
+                configure_toplevel_size(&mut compositor, surface, width, height);
             }
             compositor.layout_dirty = false;
             compositor.needs_redraw = true;
@@ -823,7 +876,9 @@ fn run_action(
     keyboard: &smithay::input::keyboard::KeyboardHandle<Compositor>,
 ) {
     if let Some(command) = action.strip_prefix("exec ") {
-        spawn_client_command(command);
+        if let Some(child) = spawn_client_command(command) {
+            compositor.children.push(child);
+        }
         return;
     }
 
@@ -856,15 +911,7 @@ fn run_action(
                         .copied()
                         .unwrap_or_else(|| centered_window_rect(compositor.output_size));
                     compositor.floating_surfaces.push(wl_surface.clone());
-                    if let Some((_, stored)) = compositor
-                        .floating_rects
-                        .iter_mut()
-                        .find(|(known, _)| known == &wl_surface)
-                    {
-                        *stored = rect;
-                    } else {
-                        compositor.floating_rects.push((wl_surface, rect));
-                    }
+                    store_floating_rect(compositor, &wl_surface, rect);
                 }
             }
             compositor.layout_dirty = true;
@@ -878,6 +925,8 @@ fn run_action(
         "zoom_reset" => compositor.config.master_ratio = 0.5,
         "toggleoverview" => compositor.overview = !compositor.overview,
         "matrix_left" | "matrix_right" | "matrix_up" | "matrix_down" => {
+            compositor.pan_drag = None;
+            compositor.pan_offset = (0.0, 0.0);
             match action {
                 "matrix_left" => {
                     compositor.current_view.0 = compositor.current_view.0.saturating_sub(1)
@@ -903,14 +952,43 @@ fn run_action(
     compositor.needs_redraw = true;
 }
 
-fn spawn_client_command(command: &str) {
-    let _ = Command::new("sh")
+fn spawn_client_command(command: &str) -> Option<LaunchedCommand> {
+    match Command::new("sh")
         .arg("-c")
         .arg(command)
         .env("WAYLAND_DISPLAY", "wayland-aetherwm")
         .env("XDG_SESSION_TYPE", "wayland")
         .env_remove("DISPLAY")
-        .spawn();
+        .spawn()
+    {
+        Ok(child) => Some(LaunchedCommand {
+            command: command.to_string(),
+            child,
+        }),
+        Err(error) => {
+            eprintln!("AetherWM: failed to start command '{command}': {error}");
+            None
+        }
+    }
+}
+
+pub(crate) fn reap_children(children: &mut Vec<LaunchedCommand>) {
+    children.retain_mut(|process| match process.child.try_wait() {
+        Ok(Some(status)) => {
+            if !status.success() {
+                eprintln!(
+                    "AetherWM: command '{}' exited with {status}",
+                    process.command
+                );
+            }
+            false
+        }
+        Ok(None) => true,
+        Err(error) => {
+            eprintln!("AetherWM: could not reap child process: {error}");
+            false
+        }
+    });
 }
 
 fn next_serial(compositor: &mut Compositor) -> Serial {
@@ -938,14 +1016,32 @@ fn surface_at(
 }
 
 fn visible_surfaces(compositor: &Compositor) -> Vec<ToplevelSurface> {
+    let output_width = compositor.output_size.0.max(1) as f64;
+    let output_height = compositor.output_size.1.max(1) as f64;
     compositor
         .xdg_shell_state
         .toplevel_surfaces()
         .iter()
         .filter(|surface| {
-            compositor.surface_views.iter().any(|(known, view)| {
-                known == surface.wl_surface() && *view == compositor.current_view
-            })
+            compositor
+                .surface_views
+                .iter()
+                .find(|(known, _)| known == surface.wl_surface())
+                .is_some_and(|(_, view)| {
+                    if compositor.overview {
+                        return *view == compositor.current_view;
+                    }
+                    let x = (view.0.saturating_sub(compositor.current_view.0) as f64
+                        * output_width)
+                        + compositor.pan_offset.0;
+                    let y = (view.1.saturating_sub(compositor.current_view.1) as f64
+                        * output_height)
+                        + compositor.pan_offset.1;
+                    x < output_width
+                        && x + output_width > 0.0
+                        && y < output_height
+                        && y + output_height > 0.0
+                })
         })
         .map(Clone::clone)
         .collect()
@@ -964,27 +1060,56 @@ fn window_boxes(
         );
     }
 
-    let tiled_count = surfaces
-        .iter()
-        .filter(|surface| {
-            !compositor
-                .floating_surfaces
-                .iter()
-                .any(|floating| floating == surface.wl_surface())
-        })
-        .count();
-    let tiled_boxes = tile_boxes(
-        tiled_count,
-        compositor.output_size,
-        &compositor.config,
-        false,
-    );
-    let mut tiled_index = 0;
+    let mut groups: Vec<((i32, i32), Vec<usize>)> = Vec::new();
+    for (index, surface) in surfaces.iter().enumerate() {
+        let view = compositor
+            .surface_views
+            .iter()
+            .find(|(known, _)| known == surface.wl_surface())
+            .map(|(_, view)| *view)
+            .unwrap_or(compositor.current_view);
+        if let Some((_, indexes)) = groups.iter_mut().find(|(known, _)| *known == view) {
+            indexes.push(index);
+        } else {
+            groups.push((view, vec![index]));
+        }
+    }
 
-    surfaces
-        .iter()
-        .map(|surface| {
-            if compositor
+    let mut result = vec![centered_window_rect(compositor.output_size); surfaces.len()];
+    let (output_width, output_height) = (
+        compositor.output_size.0.max(1),
+        compositor.output_size.1.max(1),
+    );
+    for (view, indexes) in groups {
+        let tiled_count = indexes
+            .iter()
+            .filter(|&&index| {
+                !compositor
+                    .floating_surfaces
+                    .iter()
+                    .any(|floating| floating == surfaces[index].wl_surface())
+            })
+            .count();
+        let tiled_boxes = tile_boxes(
+            tiled_count,
+            compositor.output_size,
+            &compositor.config,
+            false,
+        );
+        let mut tiled_index = 0;
+        let shift_x = view
+            .0
+            .saturating_sub(compositor.current_view.0)
+            .saturating_mul(output_width) as f64
+            + compositor.pan_offset.0;
+        let shift_y = view
+            .1
+            .saturating_sub(compositor.current_view.1)
+            .saturating_mul(output_height) as f64
+            + compositor.pan_offset.1;
+        for index in indexes {
+            let surface = &surfaces[index];
+            let mut rect = if compositor
                 .floating_surfaces
                 .iter()
                 .any(|floating| floating == surface.wl_surface())
@@ -1002,16 +1127,136 @@ fn window_boxes(
                     .unwrap_or_else(|| centered_window_rect(compositor.output_size));
                 tiled_index += 1;
                 rect
-            }
-        })
-        .collect()
+            };
+            rect.0 = rect.0.saturating_add(shift_x.round() as i32);
+            rect.1 = rect.1.saturating_add(shift_y.round() as i32);
+            result[index] = rect;
+        }
+    }
+    result
+}
+
+pub(crate) fn configure_toplevel_size(
+    compositor: &mut Compositor,
+    surface: &ToplevelSurface,
+    width: i32,
+    height: i32,
+) {
+    let size = (width.max(1), height.max(1));
+    if compositor
+        .configured_sizes
+        .iter()
+        .any(|(known, configured)| known == surface.wl_surface() && *configured == size)
+    {
+        return;
+    }
+    surface.with_pending_state(|state| {
+        state.size = Some(Size::<i32, Logical>::new(size.0, size.1));
+    });
+    surface.send_configure();
+    if let Some((_, configured)) = compositor
+        .configured_sizes
+        .iter_mut()
+        .find(|(known, _)| known == surface.wl_surface())
+    {
+        *configured = size;
+    } else {
+        compositor
+            .configured_sizes
+            .push((surface.wl_surface().clone(), size));
+    }
+}
+
+fn begin_pan(compositor: &mut Compositor, button: u32) {
+    if compositor.pan_drag.is_some() || compositor.overview {
+        return;
+    }
+    compositor.pan_drag = Some(PanDragState {
+        button,
+        start: compositor.pointer_location,
+        initial_offset: compositor.pan_offset,
+    });
+    // Include adjacent matrix cells while dragging so the desktop moves as a canvas.
+    compositor.layout_dirty = true;
+    compositor.needs_redraw = true;
+}
+
+fn update_pan(compositor: &mut Compositor, location: Point<f64, Logical>) {
+    if let Some(drag) = compositor.pan_drag {
+        let before = visible_view_set(compositor);
+        compositor.pointer_location = location;
+        compositor.pan_offset = (
+            drag.initial_offset.0 + location.x - drag.start.x,
+            drag.initial_offset.1 + location.y - drag.start.y,
+        );
+        if before != visible_view_set(compositor) {
+            compositor.layout_dirty = true;
+        }
+        compositor.needs_redraw = true;
+    }
+}
+
+fn visible_view_set(compositor: &Compositor) -> Vec<(i32, i32)> {
+    let width = compositor.output_size.0.max(1) as f64;
+    let height = compositor.output_size.1.max(1) as f64;
+    let mut views = Vec::new();
+    for (_, view) in &compositor.surface_views {
+        let x = view.0.saturating_sub(compositor.current_view.0) as f64 * width
+            + compositor.pan_offset.0;
+        let y = view.1.saturating_sub(compositor.current_view.1) as f64 * height
+            + compositor.pan_offset.1;
+        if x < width && x + width > 0.0 && y < height && y + height > 0.0 && !views.contains(view) {
+            views.push(*view);
+        }
+    }
+    views
+}
+
+fn finish_pan(compositor: &mut Compositor, button: u32) -> bool {
+    let Some(drag) = compositor.pan_drag else {
+        return false;
+    };
+    if drag.button != button {
+        return false;
+    }
+    let width = compositor.output_size.0.max(1) as f64;
+    let height = compositor.output_size.1.max(1) as f64;
+    let shift_x = (-compositor.pan_offset.0 / width).round() as i32;
+    let shift_y = (-compositor.pan_offset.1 / height).round() as i32;
+    compositor.current_view.0 = compositor.current_view.0.saturating_add(shift_x);
+    compositor.current_view.1 = compositor.current_view.1.saturating_add(shift_y);
+    compositor.pan_offset.0 += shift_x as f64 * width;
+    compositor.pan_offset.1 += shift_y as f64 * height;
+    compositor.pan_drag = None;
+    compositor.focused_index = 0;
+    compositor.layout_dirty = true;
+    compositor.needs_redraw = true;
+    true
 }
 
 fn store_floating_rect(
     compositor: &mut Compositor,
     surface: &WlSurface,
-    rect: (i32, i32, i32, i32),
+    mut rect: (i32, i32, i32, i32),
 ) {
+    if let Some((_, view)) = compositor
+        .surface_views
+        .iter()
+        .find(|(known, _)| known == surface)
+    {
+        rect.0 = rect.0.saturating_sub(
+            view.0
+                .saturating_sub(compositor.current_view.0)
+                .saturating_mul(compositor.output_size.0.max(1))
+                .saturating_add(compositor.pan_offset.0.round() as i32),
+        );
+        rect.1 = rect.1.saturating_sub(
+            view.1
+                .saturating_sub(compositor.current_view.1)
+                .saturating_mul(compositor.output_size.1.max(1))
+                .saturating_add(compositor.pan_offset.1.round() as i32),
+        );
+    }
     if let Some((_, stored)) = compositor
         .floating_rects
         .iter_mut()

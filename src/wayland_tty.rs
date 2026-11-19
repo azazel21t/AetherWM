@@ -27,12 +27,13 @@ use smithay::reexports::calloop::EventLoop;
 use smithay::reexports::drm::control::{self, Device as ControlDevice};
 use smithay::reexports::input::Libinput;
 use smithay::reexports::rustix::fs::OFlags;
-use smithay::reexports::wayland_server::{Display, ListeningSocket};
+use smithay::reexports::wayland_server::{Client, Display};
 use smithay::utils::{DeviceFd, Rectangle, Transform};
 use smithay::wayland::compositor::CompositorState;
 use smithay::wayland::selection::data_device::DataDeviceState;
 use smithay::wayland::shell::xdg::XdgShellState;
 use smithay::wayland::shm::ShmState;
+use smithay::wayland::socket::ListeningSocketSource;
 
 use super::{Compositor, WaylandClientState};
 
@@ -134,9 +135,13 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         surface_views: Vec::new(),
         floating_surfaces: Vec::new(),
         floating_rects: Vec::new(),
+        configured_sizes: Vec::new(),
         focused_index: 0,
         overview: false,
         drag: None,
+        pan_drag: None,
+        pan_offset: (0.0, 0.0),
+        children: Vec::new(),
     };
     compositor.seat.add_keyboard(Default::default(), 200, 200)?;
     compositor.seat.add_pointer();
@@ -178,7 +183,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
     })?;
 
-    let socket = ListeningSocket::bind("wayland-aetherwm")?;
+    let socket = ListeningSocketSource::with_name("wayland-aetherwm")?;
     // SAFETY: the compositor sets its client environment before spawning children.
     unsafe {
         std::env::set_var("WAYLAND_DISPLAY", "wayland-aetherwm");
@@ -186,7 +191,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let start = Instant::now();
-    let mut clients = Vec::new();
+    let clients = Rc::new(RefCell::new(Vec::<Client>::new()));
     eprintln!(
         "AetherWM native Wayland compositor on {} at {}x{} (seat {})",
         gpu_path.display(),
@@ -195,21 +200,35 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
         seat_name
     );
     for command in &compositor.config.autostart {
-        super::spawn_client_command(command);
+        if let Some(child) = super::spawn_client_command(command) {
+            compositor.children.push(child);
+        }
     }
 
-    while compositor.running {
-        event_loop.dispatch(Some(Duration::from_millis(8)), &mut compositor)?;
-
-        while let Some(stream) = socket.accept()? {
-            let client = display
-                .handle()
-                .insert_client(stream, Arc::new(WaylandClientState::default()))?;
-            clients.push(client);
+    let mut client_display = display.handle();
+    let connected_clients = clients.clone();
+    loop_handle.insert_source(socket, move |stream, _, _| {
+        match client_display.insert_client(stream, Arc::new(WaylandClientState::default())) {
+            Ok(client) => connected_clients.borrow_mut().push(client),
+            Err(error) => eprintln!("AetherWM: could not accept Wayland client: {error}"),
         }
+    })?;
+
+    while compositor.running {
+        super::reap_children(&mut compositor.children);
+        event_loop.dispatch(Some(Duration::from_millis(8)), &mut compositor)?;
         display.dispatch_clients(&mut compositor)?;
 
         let current_surfaces = compositor.xdg_shell_state.toplevel_surfaces();
+        let closed_surface = compositor.surface_views.iter().any(|(known, _)| {
+            !current_surfaces
+                .iter()
+                .any(|surface| surface.wl_surface() == known)
+        });
+        if closed_surface {
+            compositor.layout_dirty = true;
+            compositor.needs_redraw = true;
+        }
         compositor.surface_views.retain(|(known, _)| {
             current_surfaces
                 .iter()
@@ -221,6 +240,11 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .any(|surface| surface.wl_surface() == known)
         });
         compositor.floating_rects.retain(|(known, _)| {
+            current_surfaces
+                .iter()
+                .any(|surface| surface.wl_surface() == known)
+        });
+        compositor.configured_sizes.retain(|(known, _)| {
             current_surfaces
                 .iter()
                 .any(|surface| surface.wl_surface() == known)
@@ -243,10 +267,7 @@ pub(super) fn run() -> Result<(), Box<dyn std::error::Error>> {
             let boxes = super::window_boxes(&compositor, &surfaces);
             for (surface, (_, _, width, height)) in surfaces.iter().zip(boxes) {
                 compositor.output.enter(surface.wl_surface());
-                surface.with_pending_state(|state| {
-                    state.size = Some((width, height).into());
-                });
-                surface.send_configure();
+                super::configure_toplevel_size(&mut compositor, surface, width, height);
             }
             compositor.layout_dirty = false;
             compositor.needs_redraw = true;
@@ -440,7 +461,26 @@ fn handle_input_event<B: InputBackend>(compositor: &mut Compositor, event: Input
         InputEvent::PointerButton { event } => {
             let button_code = event.button_code();
             let button_state = event.state();
-            if let Some(drag) = compositor.drag.clone() {
+            let super_held = compositor
+                .seat
+                .get_keyboard()
+                .is_some_and(|keyboard| keyboard.modifier_state().logo);
+            if button_state == ButtonState::Released && super::finish_pan(compositor, button_code) {
+                let first = super::visible_surfaces(compositor)
+                    .first()
+                    .map(|surface| surface.wl_surface().clone());
+                let serial = super::next_serial(compositor);
+                if let Some(keyboard) = compositor.seat.get_keyboard() {
+                    keyboard.set_focus(compositor, first, serial);
+                }
+            } else if button_state == ButtonState::Pressed
+                && ((super_held && button_code == 0x112)
+                    || (!super_held
+                        && button_code == 0x110
+                        && super::surface_at(compositor, compositor.pointer_location).is_none()))
+            {
+                super::begin_pan(compositor, button_code);
+            } else if let Some(drag) = compositor.drag.clone() {
                 if button_state == ButtonState::Released && button_code == drag.button {
                     compositor.drag = None;
                 }
@@ -519,6 +559,10 @@ fn handle_pointer_motion(
     location: smithay::utils::Point<f64, smithay::utils::Logical>,
     time: u32,
 ) {
+    if compositor.pan_drag.is_some() {
+        super::update_pan(compositor, location);
+        return;
+    }
     compositor.pointer_location = location;
     if let Some(drag) = compositor.drag.clone() {
         let dx = (location.x - drag.start.x).round() as i32;

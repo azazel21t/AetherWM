@@ -98,6 +98,16 @@ AetherWM blends keyboard-driven tiling efficiency with fluid mouse interaction:
 | **Resize Window** | `Super + Right-drag` on a window |
 | **Focus Window** | Left-click any window |
 
+## 🖱️ Wayland canvas gestures
+
+| Action | Control / Gesture |
+| :--- | :--- |
+| **Pan the workspace canvas** | Left-drag on empty desktop **OR** `Super + Middle-drag` anywhere |
+| **Move a floating window** | `Super + Left-drag` on a window |
+| **Resize a floating window** | `Super + Right-drag` on a window |
+
+The canvas follows the pointer while dragging and settles on the nearest matrix cell when released. Neighboring workspaces slide into view during the pan.
+
 ---
 
 ## ⚙️ Configuration & Customization Reference
