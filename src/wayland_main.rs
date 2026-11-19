@@ -770,6 +770,38 @@ pub(crate) fn draw_window_decorations<F: Frame>(
                 }
             }
         }
+        // The masks above also clip the square border strips. Restore the border
+        // along the rounded left and right edges so the outline follows the arc.
+        if border > 0 && r > 0 {
+            let color = rgb(if index == focused_index {
+                config.focused_border_color
+            } else {
+                config.border_color
+            });
+            let b = border.min(width / 2).max(0);
+            for dy in 0..r {
+                let inset = r - ((r * r - (r - dy) * (r - dy)).max(0) as f64).sqrt().floor() as i32;
+                let row_width = b.min(width.saturating_sub(2 * inset));
+                if row_width > 0 {
+                    for row_y in [y + dy, y + height - 1 - dy] {
+                        frame.clear(
+                            color,
+                            &[Rectangle::new(
+                                (x + inset, row_y).into(),
+                                (row_width, 1).into(),
+                            )],
+                        )?;
+                        frame.clear(
+                            color,
+                            &[Rectangle::new(
+                                (x + width - inset - row_width, row_y).into(),
+                                (row_width, 1).into(),
+                            )],
+                        )?;
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
