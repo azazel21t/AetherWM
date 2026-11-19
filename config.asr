@@ -49,6 +49,7 @@ vsync = true
 # Available Modifiers: Mod4 (Super/Windows key), Mod1 (Alt), Shift, Control/Ctrl
 #
 # Available Actions:
+#   - exit            : Exit the Wayland compositor
 #   - killclient      : Close the currently focused application window
 #   - reload_config   : Hot-reload this configuration file without restarting WM
 #   - togglefloating  : Switch the focused window between tiled and floating layouts
@@ -64,6 +65,7 @@ bind Mod4 + Return -> exec kitty
 # bind Mod4 + d -> exec your-launcher
 
 # --- Window & Session Management ---
+bind Mod4 + Shift + Escape -> exit
 bind Mod4 + q             -> killclient
 bind Mod4 + r             -> reload_config
 bind Mod4 + Shift + space -> togglefloating

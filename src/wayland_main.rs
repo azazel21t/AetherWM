@@ -1,38 +1,55 @@
-//! Nested Wayland compositor used as the active migration target.
-//!
-//! Direct DRM/session startup is not implemented yet; `aetherwm-x11` remains
-//! available as a temporary fallback while that backend is built.
+//! Wayland compositor with native TTY and optional nested development backends.
 
 use std::os::unix::io::OwnedFd;
 use std::path::PathBuf;
 use std::process::Command;
+#[cfg(feature = "wayland-nested")]
 use std::sync::Arc;
+#[cfg(feature = "wayland-nested")]
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "wayland-nested")]
 use smithay::backend::egl::context::GlAttributes;
+#[cfg(feature = "wayland-nested")]
 use smithay::backend::input::{
     AbsolutePositionEvent, ButtonState, Event, InputEvent, KeyboardKeyEvent, PointerButtonEvent,
 };
+#[cfg(feature = "wayland-nested")]
 use smithay::backend::renderer::element::surface::{
     WaylandSurfaceRenderElement, render_elements_from_surface_tree,
 };
-use smithay::backend::renderer::utils::{draw_render_elements, on_commit_buffer_handler};
+#[cfg(feature = "wayland-nested")]
+use smithay::backend::renderer::utils::draw_render_elements;
+use smithay::backend::renderer::utils::on_commit_buffer_handler;
+#[cfg(feature = "wayland-nested")]
 use smithay::backend::renderer::{Color32F, Frame, Renderer};
+#[cfg(feature = "wayland-nested")]
 use smithay::backend::renderer::{element::Kind, gles::GlesRenderer};
+#[cfg(feature = "wayland-nested")]
 use smithay::backend::winit::{self, WinitEvent};
+#[cfg(feature = "wayland-nested")]
 use smithay::input::keyboard::{FilterResult, xkb};
+#[cfg(feature = "wayland-nested")]
 use smithay::input::pointer::{ButtonEvent, MotionEvent};
 use smithay::input::{Seat, SeatHandler, SeatState};
-use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
+use smithay::output::Output;
+#[cfg(feature = "wayland-nested")]
+use smithay::output::{Mode, PhysicalProperties, Scale, Subpixel};
+use smithay::reexports::wayland_protocols;
 use smithay::reexports::wayland_server::protocol::wl_seat;
 use smithay::reexports::wayland_server::protocol::wl_surface::{self, WlSurface};
 use smithay::reexports::wayland_server::{
-    Client, Display, ListeningSocket,
+    Client,
     backend::{ClientData, ClientId, DisconnectReason},
     protocol::wl_buffer,
 };
-use smithay::reexports::{wayland_protocols, winit as smithay_winit};
-use smithay::utils::{Logical, Point, Rectangle, Serial, Size, Transform};
+#[cfg(feature = "wayland-nested")]
+use smithay::reexports::wayland_server::{Display, ListeningSocket};
+#[cfg(feature = "wayland-nested")]
+use smithay::reexports::winit as smithay_winit;
+use smithay::utils::{Logical, Point, Serial, Size};
+#[cfg(feature = "wayland-nested")]
+use smithay::utils::{Rectangle, Transform};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{
     CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes, TraversalAction,
@@ -52,9 +69,15 @@ use smithay::{
     delegate_xdg_shell,
 };
 
+#[cfg(feature = "wayland-nested")]
 use smithay_winit::platform::pump_events::PumpStatus;
+#[cfg(feature = "wayland-nested")]
 use smithay_winit::{dpi::LogicalSize, window::Window};
 use wayland_protocols::xdg::shell::server::xdg_toplevel;
+
+#[cfg(feature = "wayland-tty")]
+#[path = "wayland_tty.rs"]
+mod tty;
 
 #[path = "config.rs"]
 #[allow(dead_code)]
@@ -214,6 +237,22 @@ impl ClientData for WaylandClientState {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().any(|arg| arg == "--nested") {
+        #[cfg(feature = "wayland-nested")]
+        return run_nested();
+        #[cfg(not(feature = "wayland-nested"))]
+        return Err("nested backend was disabled at build time".into());
+    }
+
+    #[cfg(feature = "wayland-tty")]
+    return tty::run();
+
+    #[cfg(all(not(feature = "wayland-tty"), feature = "wayland-nested"))]
+    run_nested()
+}
+
+#[cfg(feature = "wayland-nested")]
+fn run_nested() -> Result<(), Box<dyn std::error::Error>> {
     let config = load_config();
     let attributes = Window::default_attributes()
         .with_inner_size(LogicalSize::new(1280.0, 720.0))
@@ -692,6 +731,7 @@ fn run_action(
     }
 
     match action {
+        "exit" => compositor.running = false,
         "killclient" => {
             if let Some(surface) = visible_surfaces(compositor).get(compositor.focused_index) {
                 surface.send_close();

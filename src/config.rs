@@ -58,6 +58,7 @@ impl Default for Config {
             vsync: true,
             autostart: Vec::new(),
             bindings: vec![
+                b(&["Mod4", "Shift"], "Escape", "exit"),
                 b(&["Mod4"], "q", "killclient"),
                 b(&["Mod4"], "r", "reload_config"),
                 b(&["Mod4", "Shift"], "space", "togglefloating"),

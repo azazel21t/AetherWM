@@ -16,25 +16,27 @@
 
 ## 🌌 What is AetherWM?
 
-AetherWM is moving from its original X11 window manager to a native Wayland compositor. The current Wayland build is a nested compositor for development; a direct DRM/session backend and broader desktop protocol support are still in progress.
+AetherWM is moving from its original X11 window manager to a native Wayland compositor. The Wayland build can run directly on a Linux TTY through libseat, DRM/KMS, GBM, EGL, and libinput. The older X11 window manager remains available as a separate executable.
 
-The port is built on Smithay and already includes XDG toplevels, shared-memory buffers, keyboard and pointer input, matrix workspaces, master-stack tiling, overview, configurable keybindings, and nested-output VSync.
+The compositor includes XDG toplevels, shared-memory buffers, keyboard and pointer input, matrix workspaces, master-stack tiling, overview, configurable keybindings, and a nested development mode.
 
 ### Current Wayland build
 
-`cargo run` starts the nested Wayland compositor inside the current desktop session. It creates the `wayland-aetherwm` socket and launches configured autostart commands with that socket selected. The existing X11 implementation is still available with `cargo run --bin aetherwm-x11` while features are moved across.
+By default, `cargo run` starts the native compositor and takes over the active local TTY. Run it from a logged-in TTY session; libseat obtains display and input access through logind or seatd. It selects one connected DRM output. To build and run the nested development backend inside an existing desktop, use `cargo run --features wayland-nested -- --nested`.
 
-This is the migration base, not yet a replacement for a full login-session compositor: direct DRM/seat startup, layer-shell panels, and XWayland integration remain to be implemented.
+Both modes create the `wayland-aetherwm` socket and launch configured autostart commands with that socket selected. Layer-shell panels, XWayland, multiple outputs, and output hotplug are not implemented yet. The X11 implementation remains available with `cargo run --bin aetherwm-x11`.
+
+The native build needs the development packages for libseat, libinput, libudev, libdrm, GBM, EGL, and xkbcommon in addition to Rust dependencies.
 
 ### Release install
 
-`cargo build --release --bins` leaves both executables in `target/release`. Install them and register the X11 session separately:
+`cargo build --release --bins` leaves both executables in `target/release`. Install them and register the Wayland and X11 sessions:
 
 ```sh
 sudo make install PREFIX=/usr
 ```
 
-The X11 session then appears in display managers that scan `/usr/share/xsessions`. For `startx`, put `exec aetherwm-x11` in `~/.xinitrc`; a sample is installed at `/usr/share/aetherwm/examples/xinitrc`. The Wayland executable is installed to `/usr/bin/aetherwm-wayland` for nested testing, but it is not registered under `wayland-sessions` because it cannot start a real login session yet.
+The Wayland session appears in display managers that scan `/usr/share/wayland-sessions`; the X11 session appears under `/usr/share/xsessions`. For a TTY, log in on a local virtual terminal and run `aetherwm-wayland`. To launch the X11 build with `startx`, put `exec aetherwm-x11` in `~/.xinitrc`; a sample is installed at `/usr/share/aetherwm/examples/xinitrc`.
 
 To stage an install for packaging without writing to system directories, run `DESTDIR=/tmp/aetherwm-package PREFIX=/usr make install` after building.
 
@@ -47,14 +49,14 @@ To stage an install for packaging without writing to system directories, run `DE
 | **Active RAM Footprint** | To be measured for the Wayland build |
 | **Legacy X11 Test Rig** | HP Laptop 14s-fq0xxx (AMD 3020e, Radeon Vega 3 Integrated Graphics) + External Display |
 | **Operating System** | Most Linux Distros |
-| **Display Server** | Wayland prototype (nested); legacy X11 target |
-| **Display Support** | One nested output in the current Wayland build; multi-output support is pending |
+| **Display Server** | Native Wayland compositor; legacy X11 target |
+| **Display Support** | One DRM output; multi-output and hotplug support are pending |
 
 ---
 
 ## ✨ Feature status
 
-The Wayland build currently has matrix workspaces, master-stack tiling, a thumbnail overview, per-window floating and move/resize gestures, keybindings, and nested output VSync. The following features belong to the legacy X11 target and have not all been ported:
+The Wayland build currently has matrix workspaces, master-stack tiling, a thumbnail overview, per-window floating and move/resize gestures, keybindings, and nested output VSync. Native DRM page flips are synchronized to the display. The following features belong to the legacy X11 target and have not all been ported:
 
 *   Infinite spatial canvas, continuous zoom, and animated transitions.
 *   Xrandr multi-monitor management and cursor-aware window spawning.
@@ -68,6 +70,7 @@ The default bindings are read from `config.ars` or `config.asr`. A config file's
 | Action | Default |
 | :--- | :--- |
 | Launch Kitty | `Super + Return` |
+| Exit compositor | `Super + Shift + Escape` |
 | Close focused window | `Super + q` |
 | Toggle focused window floating | `Super + Shift + Space` |
 | Show overview; click a window to leave it | `Super + p` |
@@ -77,7 +80,7 @@ The default bindings are read from `config.ars` or `config.asr`. A config file's
 | Move floating window | `Super + Left-drag` |
 | Resize floating window | `Super + Right-drag` |
 
-The Wayland build currently uses gaps, `master_ratio`, `default_layout`, bindings, autostart commands, and `vsync`. Border settings and window rules are still X11-only. Autostart and `exec` commands run with the nested Wayland socket selected and `DISPLAY` removed; X11-only apps need XWayland support, which has not been added yet.
+The Wayland build currently uses gaps, `master_ratio`, `default_layout`, bindings, and autostart commands. `vsync` controls the nested renderer; native DRM presentation follows the display's page-flip timing. Border settings and window rules are still X11-only. Autostart and `exec` commands run with the AetherWM Wayland socket selected and `DISPLAY` removed; X11-only apps need XWayland support, which has not been added yet.
 
 ---
 
@@ -99,7 +102,7 @@ AetherWM blends keyboard-driven tiling efficiency with fluid mouse interaction:
 
 The main settings live in `~/.config/aetherwm/config.ars`. The legacy X11 target also reads `~/.config/aetherwm/comp.conf` for its XRender effects; the Wayland target does not use that X11 compositor config.
 
-The Wayland target reads `config.ars` (or `config.asr` as a fallback). Its `vsync = true` setting synchronizes the nested renderer to the host window's refresh; set it to `false` to disable that synchronization.
+The Wayland target reads `config.ars` (or `config.asr` as a fallback). In nested mode, `vsync = true` synchronizes the renderer to the host window's refresh; set it to `false` to disable that synchronization. Native DRM output uses page flips synchronized to the display.
 
 ### Sample Configuration (`config.ars`)
 ```text

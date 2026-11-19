@@ -10,13 +10,24 @@ libc = "0.2"
 smithay = { version = "0.7", default-features = false, optional = true }
 
 [features]
-default = ["wayland-nested"]
+default = ["wayland-tty"]
+wayland-tty = [
+    "dep:smithay",
+    "smithay/backend_drm",
+    "smithay/backend_egl",
+    "smithay/backend_gbm",
+    "smithay/backend_libinput",
+    "smithay/backend_session_libseat",
+    "smithay/backend_udev",
+    "smithay/renderer_gl",
+    "smithay/wayland_frontend",
+]
 wayland-nested = ["dep:smithay", "smithay/backend_winit", "smithay/wayland_frontend"]
 
 [[bin]]
 name = "aetherwm-wayland"
 path = "src/wayland_main.rs"
-required-features = ["wayland-nested"]
+required-features = ["wayland-tty"]
 
 [[bin]]
 name = "aetherwm-x11"

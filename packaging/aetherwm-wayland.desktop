@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=AetherWM
+Comment=AetherWM Wayland compositor
+Exec=aetherwm-wayland
+TryExec=aetherwm-wayland
+Type=Application
+DesktopNames=AetherWM
