@@ -1,0 +1,5 @@
+"toggleoverview" => {
+    compositor.overview = !compositor.overview;
+    compositor.layout_dirty = true;
+    compositor.needs_redraw = true;
+}
