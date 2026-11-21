@@ -358,20 +358,243 @@ fn run_nested() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let mut client_display = display.handle();
-    let connected_clients = clients.clone();
-    loop_handle.insert_source(socket, move |stream, _, _| {
-        match client_display.insert_client(stream, Arc::new(WaylandClientState::default())) {
-            Ok(client) => connected_clients.borrow_mut().push(client),
-            Err(error) => eprintln!("AetherWM: could not accept Wayland client: {error}"),
+    loop {
+        reap_children(&mut compositor.children);
+        let status = event_loop.dispatch_new_events(|event| match event {
+            WinitEvent::Input(InputEvent::Keyboard { event }) => {
+                let key_state = event.state();
+                keyboard.input::<(), _>(
+                    &mut compositor,
+                    event.key_code(),
+                    key_state,
+                    0.into(),
+                    start.elapsed().as_millis() as u32,
+                    |state, modifiers, key| {
+                        if key_state != smithay::backend::input::KeyState::Pressed {
+                            return FilterResult::Forward;
+                        }
+                        let keysym = key.modified_sym();
+                        let action = state
+                            .config
+                            .bindings
+                            .iter()
+                            .find(|binding| {
+                                let expected =
+                                    xkb::keysym_from_name(&binding.key, xkb::KEYSYM_NO_FLAGS);
+                                expected != xkb::Keysym::NoSymbol
+                                    && expected == keysym
+                                    && binding_modifiers_match(&binding.modifiers, modifiers)
+                            })
+                            .map(|binding| binding.action.clone());
+                        if let Some(action) = action {
+                            run_action(state, &action, &keyboard);
+                            FilterResult::Intercept(())
+                        } else {
+                            FilterResult::Forward
+                        }
+                    },
+                );
+            }
+            WinitEvent::Input(InputEvent::PointerMotionAbsolute { event }) => {
+                let location = event.position_transformed(Size::<i32, Logical>::new(
+                    compositor.output_size.0.max(1),
+                    compositor.output_size.1.max(1),
+                ));
+                if compositor.pan_drag.is_some() {
+                    update_pan(&mut compositor, location);
+                } else {
+                    compositor.pointer_location = location;
+                    if let Some(drag) = compositor.drag.clone() {
+                        let dx = (location.x - drag.start.x).round() as i32;
+                        let dy = (location.y - drag.start.y).round() as i32;
+                        let rect = match drag.kind {
+                            DragKind::Move => (
+                                drag.initial_rect.0 + dx,
+                                drag.initial_rect.1 + dy,
+                                drag.initial_rect.2,
+                                drag.initial_rect.3,
+                            ),
+                            DragKind::Resize => (
+                                drag.initial_rect.0,
+                                drag.initial_rect.1,
+                                (drag.initial_rect.2 + dx).max(100),
+                                (drag.initial_rect.3 + dy).max(64),
+                            ),
+                        };
+                        let output_size = compositor.output_size;
+                        store_floating_rect(
+                            &mut compositor,
+                            &drag.surface,
+                            clamp_rect(rect, output_size),
+                        );
+                        if matches!(drag.kind, DragKind::Resize) {
+                            compositor.layout_dirty = true;
+                        }
+                    } else {
+                        let focus = surface_at(&compositor, location);
+                        if compositor.config.focus_follows_mouse {
+                            if let Some((surface, _)) = focus.as_ref()
+                                && let Some(index) = visible_surfaces(&compositor)
+                                    .iter()
+                                    .position(|candidate| candidate.wl_surface() == surface)
+                            {
+                                compositor.focused_index = index;
+                            }
+                        }
+                        let time = event.time() as u32;
+                        let serial = next_serial(&mut compositor);
+                        if let Some(pointer) = compositor.seat.get_pointer() {
+                            pointer.motion(
+                                &mut compositor,
+                                focus.clone(),
+                                &MotionEvent {
+                                    location,
+                                    serial,
+                                    time,
+                                },
+                            );
+                            pointer.frame(&mut compositor);
+                        }
+                        if compositor.config.focus_follows_mouse {
+                            if let Some((surface, _)) = focus {
+                                keyboard.set_focus(&mut compositor, Some(surface), serial);
+                            }
+                        }
+                    }
+                }
+                compositor.needs_redraw = true;
+            }
+            WinitEvent::Input(InputEvent::PointerButton { event }) => {
+                let button_code = event.button_code();
+                let button_state = event.state();
+                let super_held = keyboard.modifier_state().logo;
+                if button_state == ButtonState::Released && finish_pan(&mut compositor, button_code)
+                {
+                    let first = visible_surfaces(&compositor)
+                        .first()
+                        .map(|surface| surface.wl_surface().clone());
+                    let serial = next_serial(&mut compositor);
+                    keyboard.set_focus(&mut compositor, first, serial);
+                } else if button_state == ButtonState::Pressed
+                    && ((super_held && button_code == 0x112)
+                        || (!super_held
+                            && button_code == 0x110
+                            && surface_at(&compositor, compositor.pointer_location).is_none()))
+                {
+                    begin_pan(&mut compositor, button_code);
+                } else if let Some(drag) = compositor.drag.clone() {
+                    if button_state == ButtonState::Released && button_code == drag.button {
+                        compositor.drag = None;
+                    }
+                } else if button_state == ButtonState::Pressed
+                    && keyboard.modifier_state().logo
+                    && !compositor.overview
+                    && matches!(button_code, 0x110 | 0x111)
+                {
+                    if let Some((surface, _)) = surface_at(&compositor, compositor.pointer_location)
+                    {
+                        let surfaces = visible_surfaces(&compositor);
+                        if let Some(index) = surfaces
+                            .iter()
+                            .position(|candidate| candidate.wl_surface() == &surface)
+                        {
+                            let rect = window_boxes(&compositor, &surfaces)[index];
+                            if !compositor
+                                .floating_surfaces
+                                .iter()
+                                .any(|floating| floating == &surface)
+                            {
+                                compositor.floating_surfaces.push(surface.clone());
+                            }
+                            store_floating_rect(&mut compositor, &surface, rect);
+                            compositor.focused_index = index;
+                            compositor.drag = Some(DragState {
+                                surface: surface.clone(),
+                                button: button_code,
+                                kind: if button_code == 0x110 {
+                                    DragKind::Move
+                                } else {
+                                    DragKind::Resize
+                                },
+                                start: compositor.pointer_location,
+                                initial_rect: rect,
+                            });
+                            let serial = next_serial(&mut compositor);
+                            keyboard.set_focus(&mut compositor, Some(surface), serial);
+                            compositor.layout_dirty = true;
+                            compositor.needs_redraw = true;
+                        }
+                    }
+                } else {
+                    if button_state == ButtonState::Pressed && compositor.overview {
+                        compositor.overview = false;
+                        compositor.layout_dirty = true;
+                        compositor.needs_redraw = true;
+                    }
+                    let serial = next_serial(&mut compositor);
+                    if let Some(pointer) = compositor.seat.get_pointer() {
+                        pointer.button(
+                            &mut compositor,
+                            &ButtonEvent {
+                                serial,
+                                time: event.time() as u32,
+                                button: button_code,
+                                state: button_state,
+                            },
+                        );
+                        pointer.frame(&mut compositor);
+                    }
+                }
+            }
+            WinitEvent::Resized { size, .. } => {
+                compositor.output_size = (size.w.max(1), size.h.max(1));
+                let mode = Mode {
+                    size: (compositor.output_size.0, compositor.output_size.1).into(),
+                    refresh: 60_000,
+                };
+                compositor.output.set_preferred(mode);
+                compositor.output.change_current_state(
+                    Some(mode),
+                    Some(Transform::Normal),
+                    Some(Scale::Integer(1)),
+                    Some((0, 0).into()),
+                );
+                compositor.layout_dirty = true;
+                compositor.needs_redraw = true;
+            }
+            WinitEvent::CloseRequested => compositor.running = false,
+            _ => {}
+        });
+        if matches!(status, PumpStatus::Exit(_)) || !compositor.running {
+            break;
         }
-    })?;
 
-    while compositor.running {
-        super::reap_children(&mut compositor.children);
-        event_loop.dispatch(Some(Duration::from_millis(8)), &mut compositor)?;
+        let window_size = backend.window_size();
+        if compositor.output_size != (window_size.w, window_size.h) {
+            compositor.output_size = (window_size.w.max(1), window_size.h.max(1));
+            let mode = Mode {
+                size: (compositor.output_size.0, compositor.output_size.1).into(),
+                refresh: 60_000,
+            };
+            compositor.output.set_preferred(mode);
+            compositor.output.change_current_state(
+                Some(mode),
+                Some(Transform::Normal),
+                Some(Scale::Integer(1)),
+                Some((0, 0).into()),
+            );
+            compositor.layout_dirty = true;
+            compositor.needs_redraw = true;
+        }
+
+        while let Some(stream) = socket.accept()? {
+            let client = display
+                .handle()
+                .insert_client(stream, Arc::new(WaylandClientState::default()))?;
+            clients.push(client);
+        }
+
         display.dispatch_clients(&mut compositor)?;
-
         let current_surfaces = compositor.xdg_shell_state.toplevel_surfaces();
         let closed_surface = compositor.surface_views.iter().any(|(known, _)| {
             !current_surfaces
@@ -426,19 +649,10 @@ fn run_nested() -> Result<(), Box<dyn std::error::Error>> {
             compositor.needs_redraw = true;
         }
 
-        if compositor.needs_redraw && session.is_active() {
-            let size = compositor.output_size.into();
+        if compositor.needs_redraw {
+            let size = backend.window_size();
             let damage = Rectangle::from_size(size);
-            let (mut dmabuf, _) = match output_surface.borrow_mut().next_buffer() {
-                Ok(buffer) => buffer,
-                Err(error) => {
-                    // A swapchain can be temporarily exhausted until the next page flip.
-                    eprintln!("AetherWM: waiting for a DRM output buffer: {error:?}");
-                    display.flush_clients()?;
-                    continue;
-                }
-            };
-            let mut framebuffer = renderer.bind(&mut dmabuf)?;
+            let (renderer, mut framebuffer) = backend.bind()?;
             let surfaces = visible_surfaces(&compositor);
             let boxes = window_boxes(&compositor, &surfaces);
             let elements = surfaces
@@ -446,7 +660,7 @@ fn run_nested() -> Result<(), Box<dyn std::error::Error>> {
                 .zip(boxes.iter().copied())
                 .flat_map(|(surface, (x, y, _, _))| {
                     render_elements_from_surface_tree(
-                        &mut renderer,
+                        renderer,
                         surface.wl_surface(),
                         (x, y),
                         1.0,
@@ -465,315 +679,633 @@ fn run_nested() -> Result<(), Box<dyn std::error::Error>> {
                 &boxes,
                 compositor.focused_index,
             )?;
-            let cursor_x = compositor.pointer_location.x.round() as i32;
-            let cursor_y = compositor.pointer_location.y.round() as i32;
-            for (row, width) in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 10, 7, 5, 4]
-                .into_iter()
-                .enumerate()
-            {
-                let outline =
-                    Rectangle::new((cursor_x, cursor_y + row as i32).into(), (width, 1).into());
-                frame.clear(Color32F::new(0.02, 0.025, 0.04, 1.0), &[outline])?;
-                if width > 2 {
-                    let fill = Rectangle::new(
-                        (cursor_x + 1, cursor_y + row as i32).into(),
-                        (width - 2, 1).into(),
-                    );
-                    frame.clear(Color32F::new(0.95, 0.97, 1.0, 1.0), &[fill])?;
-                }
-            }
-            let sync = frame.finish()?;
+            let _ = frame.finish()?;
 
             let frame_time = start.elapsed().as_millis() as u32;
-            for surface in super::visible_surfaces(&compositor) {
-                super::send_frame_callbacks(surface.wl_surface(), frame_time);
+            for surface in visible_surfaces(&compositor) {
+                send_frame_callbacks(surface.wl_surface(), frame_time);
             }
             drop(framebuffer);
-            output_surface
-                .borrow_mut()
-                .queue_buffer(Some(sync), Some(vec![damage]), frame_time)?;
+            backend.submit(Some(&[damage]))?;
             compositor.needs_redraw = false;
         }
         display.flush_clients()?;
+        std::thread::sleep(Duration::from_millis(8));
     }
 
     drop(clients);
     Ok(())
 }
 
-fn select_connected_output(
-    device: &DrmDevice,
-) -> Result<
-    (
-        control::connector::Handle,
-        control::crtc::Handle,
-        control::Mode,
-        (u32, u32),
-    ),
-    Box<dyn std::error::Error>,
-> {
-    let resources = device.resource_handles()?;
-    for connector_handle in resources.connectors() {
-        let connector = device.get_connector(*connector_handle, true)?;
-        if connector.state() != control::connector::State::Connected {
-            continue;
-        }
-        let Some(mode) = connector.modes().iter().copied().max_by_key(|mode| {
-            let (width, height) = mode.size();
-            (
-                mode.mode_type().contains(control::ModeTypeFlags::PREFERRED),
-                u32::from(width) * u32::from(height),
-                mode.vrefresh(),
-            )
-        }) else {
-            continue;
-        };
-        let Some(encoder_handle) = connector
-            .current_encoder()
-            .or_else(|| connector.encoders().first().copied())
-        else {
-            continue;
-        };
-        let encoder = device.get_encoder(encoder_handle)?;
-        let Some(crtc) = encoder.crtc().or_else(|| {
-            resources
-                .filter_crtcs(encoder.possible_crtcs())
-                .into_iter()
-                .next()
-        }) else {
-            continue;
-        };
-        let physical_size = connector.size().unwrap_or((0, 0));
-        return Ok((*connector_handle, crtc, mode, physical_size));
-    }
-
-    Err(std::io::Error::other("no connected DRM output with a usable mode was found").into())
+fn send_frame_callbacks(surface: &wl_surface::WlSurface, time: u32) {
+    with_surface_tree_downward(
+        surface,
+        (),
+        |_, _, &()| TraversalAction::DoChildren(()),
+        |_surface, states, &()| {
+            for callback in states
+                .cached_state
+                .get::<SurfaceAttributes>()
+                .current()
+                .frame_callbacks
+                .drain(..)
+            {
+                callback.done(time);
+            }
+        },
+        |_, _, &()| true,
+    );
 }
 
-fn handle_input_event<B: InputBackend>(compositor: &mut Compositor, event: InputEvent<B>) {
-    match event {
-        InputEvent::Keyboard { event } => {
-            let key_state = event.state();
-            if let Some(keyboard) = compositor.seat.get_keyboard() {
-                let time = event.time_msec();
-                keyboard.input::<(), _>(
-                    compositor,
-                    event.key_code(),
-                    key_state,
-                    0.into(),
-                    time,
-                    |state, modifiers, key| {
-                        if key_state != smithay::backend::input::KeyState::Pressed {
-                            return FilterResult::Forward;
-                        }
-                        let keysym = key.modified_sym();
-                        let action = state
-                            .config
-                            .bindings
-                            .iter()
-                            .find(|binding| {
-                                let expected =
-                                    xkb::keysym_from_name(&binding.key, xkb::KEYSYM_NO_FLAGS);
-                                expected != xkb::Keysym::NoSymbol
-                                    && expected == keysym
-                                    && super::binding_modifiers_match(&binding.modifiers, modifiers)
-                            })
-                            .map(|binding| binding.action.clone());
-                        if let Some(action) = action {
-                            match action.as_str() {
-                                "toggleoverview" => {
-                                    compositor.overview = !compositor.overview;
-                                    compositor.layout_dirty = true;
-                                    compositor.needs_redraw = true;
-                                }
-                                _ => {}
-                            }
-                            super::run_action(state, &action, &keyboard);
-                            FilterResult::Intercept(())
-                        } else {
-                            FilterResult::Forward
-                        }
-                    },
-                );
+fn tile_boxes(
+    count: usize,
+    output_size: (i32, i32),
+    config: &config::Config,
+    overview: bool,
+) -> Vec<(i32, i32, i32, i32)> {
+    if count == 0 {
+        return Vec::new();
+    }
+    let (width, height) = (output_size.0.max(1), output_size.1.max(1));
+    let outer = config.outer_gap.min(4096) as i32;
+    let inner = config.inner_gap.min(4096) as i32;
+    let x = outer;
+    let y = outer;
+    let available_width = (width - outer * 2).max(1);
+    let available_height = (height - outer * 2).max(1);
+    if overview {
+        let columns = (count as f64).sqrt().ceil() as i32;
+        let rows = (count as i32 + columns - 1) / columns;
+        let tile_width = (available_width - inner * (columns - 1)).max(1) / columns;
+        let tile_height = (available_height - inner * (rows - 1)).max(1) / rows;
+        return (0..count)
+            .map(|index| {
+                let column = index as i32 % columns;
+                let row = index as i32 / columns;
+                (
+                    x + column * (tile_width + inner),
+                    y + row * (tile_height + inner),
+                    tile_width.max(1),
+                    tile_height.max(1),
+                )
+            })
+            .collect();
+    }
+    if count == 1 {
+        return vec![(x, y, available_width, available_height); count];
+    }
+
+    let master_width =
+        (((available_width - inner).max(1) as f32) * config.master_ratio).round() as i32;
+    let stack_width = (available_width - master_width - inner).max(1);
+    let stack_count = count.saturating_sub(1) as i32;
+    let stack_height =
+        ((available_height - inner * (stack_count - 1).max(0)) / stack_count.max(1)).max(1);
+    let mut boxes = Vec::with_capacity(count);
+    boxes.push((x, y, master_width.max(1), available_height));
+    for index in 0..stack_count {
+        boxes.push((
+            x + master_width + inner,
+            y + index * (stack_height + inner),
+            stack_width,
+            stack_height,
+        ));
+    }
+    boxes
+}
+
+pub(crate) fn draw_window_decorations<F: Frame>(
+    frame: &mut F,
+    config: &config::Config,
+    boxes: &[(i32, i32, i32, i32)],
+    focused_index: usize,
+) -> Result<(), F::Error> {
+    let rgb = |value: u64| {
+        Color32F::new(
+            ((value >> 16) & 0xff) as f32 / 255.0,
+            ((value >> 8) & 0xff) as f32 / 255.0,
+            (value & 0xff) as f32 / 255.0,
+            1.0,
+        )
+    };
+    let background = Color32F::new(0.035, 0.045, 0.07, 1.0);
+    let border = config.border_width.min(32) as i32;
+    let radius = config.corner_radius.min(48) as i32;
+    for (index, &(x, y, width, height)) in boxes.iter().enumerate() {
+        if border > 0 {
+            let color = rgb(if index == focused_index {
+                config.focused_border_color
+            } else {
+                config.border_color
+            });
+            let b = border.min(width / 2).min(height / 2).max(0);
+            for (rx, ry, rw, rh) in [
+                (x, y, width, b),
+                (x, y + height - b, width, b),
+                (x, y + b, b, (height - 2 * b).max(0)),
+                (x + width - b, y + b, b, (height - 2 * b).max(0)),
+            ] {
+                frame.clear(color, &[Rectangle::new((rx, ry).into(), (rw, rh).into())])?;
             }
         }
-        InputEvent::PointerMotion { event } => {
-            let delta = event.delta();
-            let location = (
-                (compositor.pointer_location.x + delta.x)
-                    .clamp(0.0, (compositor.output_size.0 - 1).max(0) as f64),
-                (compositor.pointer_location.y + delta.y)
-                    .clamp(0.0, (compositor.output_size.1 - 1).max(0) as f64),
-            )
-                .into();
-            handle_pointer_motion(compositor, location, event.time_msec());
-        }
-        InputEvent::PointerMotionAbsolute { event } => {
-            let location = event.position_transformed(
-                (
-                    compositor.output_size.0.max(1),
-                    compositor.output_size.1.max(1),
-                )
-                    .into(),
-            );
-            handle_pointer_motion(compositor, location, event.time_msec());
-        }
-        InputEvent::PointerButton { event } => {
-            let button_code = event.button_code();
-            let button_state = event.state();
-            let super_held = compositor
-                .seat
-                .get_keyboard()
-                .is_some_and(|keyboard| keyboard.modifier_state().logo);
-            if button_state == ButtonState::Released && super::finish_pan(compositor, button_code) {
-                let first = visible_surfaces(compositor)
-                    .first()
-                    .map(|surface| surface.wl_surface().clone());
-                let serial = super::next_serial(compositor);
-                if let Some(keyboard) = compositor.seat.get_keyboard() {
-                    keyboard.set_focus(compositor, first, serial);
-                }
-            } else if button_state == ButtonState::Pressed
-                && ((super_held && button_code == 0x112)
-                    || (!super_held
-                        && button_code == 0x110
-                        && super::surface_at(compositor, compositor.pointer_location).is_none()))
-            {
-                super::begin_pan(compositor, button_code);
-            } else if let Some(drag) = compositor.drag.clone() {
-                if button_state == ButtonState::Released && button_code == drag.button {
-                    compositor.drag = None;
-                }
-            } else if button_state == ButtonState::Pressed
-                && keyboard.modifier_state().logo
-                && !compositor.overview
-                && matches!(button_code, 0x110 | 0x111)
-            {
-                if let Some((surface, _)) =
-                    super::surface_at(compositor, compositor.pointer_location)
-                {
-                    let surfaces = visible_surfaces(compositor);
-                    if let Some(index) = surfaces
-                        .iter()
-                        .position(|candidate| candidate.wl_surface() == &surface)
-                    {
-                        let rect = super::window_boxes(compositor, &surfaces)[index];
-                        if !compositor
-                            .floating_surfaces
-                            .iter()
-                            .any(|floating| floating == &surface)
-                        {
-                            compositor.floating_surfaces.push(surface.clone());
-                        }
-                        super::store_floating_rect(compositor, &surface, rect);
-                        compositor.focused_index = index;
-                        compositor.drag = Some(super::DragState {
-                            surface: surface.clone(),
-                            button: button_code,
-                            kind: if button_code == 0x110 {
-                                super::DragKind::Move
-                            } else {
-                                super::DragKind::Resize
-                            },
-                            start: compositor.pointer_location,
-                            initial_rect: rect,
-                        });
-                        let serial = super::next_serial(compositor);
-                        if let Some(keyboard) = compositor.seat.get_keyboard() {
-                            keyboard.set_focus(compositor, Some(surface), serial);
-                        }
-                        compositor.layout_dirty = true;
-                        compositor.needs_redraw = true;
+        // Mask corner pixels with the desktop background. This works best with gaps.
+        let r = radius.min(width / 2).min(height / 2);
+        for dy in 0..r {
+            let inset = r - ((r * r - (r - dy) * (r - dy)).max(0) as f64).sqrt().floor() as i32;
+            for row_y in [y + dy, y + height - 1 - dy] {
+                if inset > 0 {
+                    for (rx, rw) in [(x, inset), (x + width - inset, inset)] {
+                        frame.clear(
+                            background,
+                            &[Rectangle::new((rx, row_y).into(), (rw, 1).into())],
+                        )?;
                     }
                 }
+            }
+        }
+        // The masks above also clip the square border strips. Restore the border
+        // along the rounded left and right edges so the outline follows the arc.
+        if border > 0 && r > 0 {
+            let color = rgb(if index == focused_index {
+                config.focused_border_color
             } else {
-                if button_state == ButtonState::Pressed && compositor.overview {
-                    compositor.overview = false;
-                    compositor.layout_dirty = true;
-                    compositor.needs_redraw = true;
-                }
-                let serial = super::next_serial(compositor);
-                if let Some(pointer) = compositor.seat.get_pointer() {
-                    pointer.button(
-                        compositor,
-                        &ButtonEvent {
-                            serial,
-                            time: event.time_msec(),
-                            button: button_code,
-                            state: button_state,
-                        },
-                    );
-                    pointer.frame(compositor);
+                config.border_color
+            });
+            let b = border.min(width / 2).max(0);
+            for dy in 0..r {
+                let inset = r - ((r * r - (r - dy) * (r - dy)).max(0) as f64).sqrt().floor() as i32;
+                let row_width = b.min(width.saturating_sub(2 * inset));
+                if row_width > 0 {
+                    for row_y in [y + dy, y + height - 1 - dy] {
+                        frame.clear(
+                            color,
+                            &[Rectangle::new(
+                                (x + inset, row_y).into(),
+                                (row_width, 1).into(),
+                            )],
+                        )?;
+                        frame.clear(
+                            color,
+                            &[Rectangle::new(
+                                (x + width - inset - row_width, row_y).into(),
+                                (row_width, 1).into(),
+                            )],
+                        )?;
+                    }
                 }
             }
         }
-        _ => {}
+    }
+    Ok(())
+}
+
+fn binding_modifiers_match(
+    binding: &[String],
+    modifiers: &smithay::input::keyboard::ModifiersState,
+) -> bool {
+    let has = |name: &str| binding.iter().any(|modifier| modifier == name);
+    modifiers.logo == has("Mod4")
+        && modifiers.alt == has("Mod1")
+        && modifiers.ctrl == (has("Control") || has("Ctrl"))
+        && modifiers.shift == has("Shift")
+}
+
+fn run_action(
+    compositor: &mut Compositor,
+    action: &str,
+    keyboard: &smithay::input::keyboard::KeyboardHandle<Compositor>,
+) {
+    if let Some(command) = action.strip_prefix("exec ") {
+        if let Some(child) = spawn_client_command(command) {
+            compositor.children.push(child);
+        }
+        return;
+    }
+
+    match action {
+        "exit" => compositor.running = false,
+        "killclient" => {
+            if let Some(surface) = visible_surfaces(compositor).get(compositor.focused_index) {
+                surface.send_close();
+            }
+        }
+        "reload_config" => {
+            compositor.config = load_config();
+            compositor.layout_dirty = true;
+        }
+        "togglefloating" => {
+            let surfaces = visible_surfaces(compositor);
+            if let Some(surface) = surfaces.get(compositor.focused_index) {
+                let wl_surface = surface.wl_surface().clone();
+                if compositor
+                    .floating_surfaces
+                    .iter()
+                    .any(|floating| floating == &wl_surface)
+                {
+                    compositor
+                        .floating_surfaces
+                        .retain(|floating| floating != &wl_surface);
+                } else {
+                    let rect = window_boxes(compositor, &surfaces)
+                        .get(compositor.focused_index)
+                        .copied()
+                        .unwrap_or_else(|| centered_window_rect(compositor.output_size));
+                    compositor.floating_surfaces.push(wl_surface.clone());
+                    store_floating_rect(compositor, &wl_surface, rect);
+                }
+            }
+            compositor.layout_dirty = true;
+        }
+        "zoom_in" => {
+            compositor.config.master_ratio = (compositor.config.master_ratio + 0.05).min(0.9)
+        }
+        "zoom_out" => {
+            compositor.config.master_ratio = (compositor.config.master_ratio - 0.05).max(0.1)
+        }
+        "zoom_reset" => compositor.config.master_ratio = 0.5,
+        "toggleoverview" => compositor.overview = !compositor.overview,
+        "matrix_left" | "matrix_right" | "matrix_up" | "matrix_down" => {
+            compositor.pan_drag = None;
+            compositor.pan_offset = (0.0, 0.0);
+            match action {
+                "matrix_left" => {
+                    compositor.current_view.0 = compositor.current_view.0.saturating_sub(1)
+                }
+                "matrix_right" => {
+                    compositor.current_view.0 = compositor.current_view.0.saturating_add(1)
+                }
+                "matrix_up" => {
+                    compositor.current_view.1 = compositor.current_view.1.saturating_sub(1)
+                }
+                _ => compositor.current_view.1 = compositor.current_view.1.saturating_add(1),
+            }
+            compositor.focused_index = 0;
+            let first = visible_surfaces(compositor)
+                .first()
+                .map(|surface| surface.wl_surface().clone());
+            let serial = next_serial(compositor);
+            keyboard.set_focus(compositor, first, serial);
+        }
+        _ => return,
+    }
+    compositor.layout_dirty = true;
+    compositor.needs_redraw = true;
+}
+
+fn spawn_client_command(command: &str) -> Option<LaunchedCommand> {
+    match Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .env("WAYLAND_DISPLAY", "wayland-aetherwm")
+        .env("XDG_SESSION_TYPE", "wayland")
+        .env_remove("DISPLAY")
+        .spawn()
+    {
+        Ok(child) => Some(LaunchedCommand {
+            command: command.to_string(),
+            child,
+        }),
+        Err(error) => {
+            eprintln!("AetherWM: failed to start command '{command}': {error}");
+            None
+        }
     }
 }
 
-fn handle_pointer_motion(
+pub(crate) fn reap_children(children: &mut Vec<LaunchedCommand>) {
+    children.retain_mut(|process| match process.child.try_wait() {
+        Ok(Some(status)) => {
+            if !status.success() {
+                eprintln!(
+                    "AetherWM: command '{}' exited with {status}",
+                    process.command
+                );
+            }
+            false
+        }
+        Ok(None) => true,
+        Err(error) => {
+            eprintln!("AetherWM: could not reap child process: {error}");
+            false
+        }
+    });
+}
+
+fn next_serial(compositor: &mut Compositor) -> Serial {
+    compositor.serial = compositor.serial.wrapping_add(1).max(1);
+    Serial::from(compositor.serial)
+}
+
+fn surface_at(
+    compositor: &Compositor,
+    location: Point<f64, Logical>,
+) -> Option<(WlSurface, Point<f64, Logical>)> {
+    let surfaces = visible_surfaces(compositor);
+    let boxes = window_boxes(compositor, &surfaces);
+    surfaces
+        .iter()
+        .zip(boxes)
+        .rev()
+        .find(|(_, (x, y, width, height))| {
+            location.x >= *x as f64
+                && location.y >= *y as f64
+                && location.x < (*x + *width) as f64
+                && location.y < (*y + *height) as f64
+        })
+        .map(|(surface, (x, y, _, _))| (surface.wl_surface().clone(), (x as f64, y as f64).into()))
+}
+
+fn visible_surfaces(compositor: &Compositor) -> Vec<ToplevelSurface> {
+    let output_width = compositor.output_size.0.max(1) as f64;
+    let output_height = compositor.output_size.1.max(1) as f64;
+    compositor
+        .xdg_shell_state
+        .toplevel_surfaces()
+        .iter()
+        .filter(|surface| {
+            compositor
+                .surface_views
+                .iter()
+                .find(|(known, _)| known == surface.wl_surface())
+                .is_some_and(|(_, view)| {
+                    if compositor.overview {
+                        return *view == compositor.current_view;
+                    }
+                    let x = (view.0.saturating_sub(compositor.current_view.0) as f64
+                        * output_width)
+                        + compositor.pan_offset.0;
+                    let y = (view.1.saturating_sub(compositor.current_view.1) as f64
+                        * output_height)
+                        + compositor.pan_offset.1;
+                    x < output_width
+                        && x + output_width > 0.0
+                        && y < output_height
+                        && y + output_height > 0.0
+                })
+        })
+        .map(Clone::clone)
+        .collect()
+}
+
+fn window_boxes(
+    compositor: &Compositor,
+    surfaces: &[ToplevelSurface],
+) -> Vec<(i32, i32, i32, i32)> {
+    if compositor.overview {
+        return tile_boxes(
+            surfaces.len(),
+            compositor.output_size,
+            &compositor.config,
+            true,
+        );
+    }
+
+    let mut groups: Vec<((i32, i32), Vec<usize>)> = Vec::new();
+    for (index, surface) in surfaces.iter().enumerate() {
+        let view = compositor
+            .surface_views
+            .iter()
+            .find(|(known, _)| known == surface.wl_surface())
+            .map(|(_, view)| *view)
+            .unwrap_or(compositor.current_view);
+        if let Some((_, indexes)) = groups.iter_mut().find(|(known, _)| *known == view) {
+            indexes.push(index);
+        } else {
+            groups.push((view, vec![index]));
+        }
+    }
+
+    let mut result = vec![centered_window_rect(compositor.output_size); surfaces.len()];
+    let (output_width, output_height) = (
+        compositor.output_size.0.max(1),
+        compositor.output_size.1.max(1),
+    );
+    for (view, indexes) in groups {
+        let tiled_count = indexes
+            .iter()
+            .filter(|&&index| {
+                !compositor
+                    .floating_surfaces
+                    .iter()
+                    .any(|floating| floating == surfaces[index].wl_surface())
+            })
+            .count();
+        let tiled_boxes = tile_boxes(
+            tiled_count,
+            compositor.output_size,
+            &compositor.config,
+            false,
+        );
+        let mut tiled_index = 0;
+        let shift_x = view
+            .0
+            .saturating_sub(compositor.current_view.0)
+            .saturating_mul(output_width) as f64
+            + compositor.pan_offset.0;
+        let shift_y = view
+            .1
+            .saturating_sub(compositor.current_view.1)
+            .saturating_mul(output_height) as f64
+            + compositor.pan_offset.1;
+        for index in indexes {
+            let surface = &surfaces[index];
+            let mut rect = if compositor
+                .floating_surfaces
+                .iter()
+                .any(|floating| floating == surface.wl_surface())
+            {
+                compositor
+                    .floating_rects
+                    .iter()
+                    .find(|(known, _)| known == surface.wl_surface())
+                    .map(|(_, rect)| clamp_rect(*rect, compositor.output_size))
+                    .unwrap_or_else(|| centered_window_rect(compositor.output_size))
+            } else {
+                let rect = tiled_boxes
+                    .get(tiled_index)
+                    .copied()
+                    .unwrap_or_else(|| centered_window_rect(compositor.output_size));
+                tiled_index += 1;
+                rect
+            };
+            rect.0 = rect.0.saturating_add(shift_x.round() as i32);
+            rect.1 = rect.1.saturating_add(shift_y.round() as i32);
+            result[index] = rect;
+        }
+    }
+    result
+}
+
+pub(crate) fn configure_toplevel_size(
     compositor: &mut Compositor,
-    location: smithay::utils::Point<f64, Logical>,
-    time: u32,
+    surface: &ToplevelSurface,
+    width: i32,
+    height: i32,
 ) {
-    if compositor.pan_drag.is_some() {
-        super::update_pan(compositor, location);
+    let size = (width.max(1), height.max(1));
+    if compositor
+        .configured_sizes
+        .iter()
+        .any(|(known, configured)| known == surface.wl_surface() && *configured == size)
+    {
         return;
     }
-    compositor.pointer_location = location;
-    if let Some(drag) = compositor.drag.clone() {
-        let dx = (location.x - drag.start.x).round() as i32;
-        let dy = (location.y - drag.start.y).round() as i32;
-        let rect = match drag.kind {
-            super::DragKind::Move => (
-                drag.initial_rect.0 + dx,
-                drag.initial_rect.1 + dy,
-                drag.initial_rect.2,
-                drag.initial_rect.3,
-            ),
-            super::DragKind::Resize => (
-                drag.initial_rect.0,
-                drag.initial_rect.1,
-                (drag.initial_rect.2 + dx).max(100),
-                (drag.initial_rect.3 + dy).max(64),
-            ),
-        };
-        let output_size = compositor.output_size;
-        super::store_floating_rect(
-            compositor,
-            &drag.surface,
-            super::clamp_rect(rect, output_size),
-        );
-        if matches!(drag.kind, super::DragKind::Resize) {
-            compositor.layout_dirty = true;
-        }
+    surface.with_pending_state(|state| {
+        state.size = Some(Size::<i32, Logical>::new(size.0, size.1));
+    });
+    surface.send_configure();
+    if let Some((_, configured)) = compositor
+        .configured_sizes
+        .iter_mut()
+        .find(|(known, _)| known == surface.wl_surface())
+    {
+        *configured = size;
     } else {
-        let focus = super::surface_at(compositor, location);
-        if let Some((surface, _)) = focus.as_ref()
-            && let Some(index) = visible_surfaces(compositor)
-                .iter()
-                .position(|candidate| candidate.wl_surface() == surface)
-        {
-            compositor.focused_index = index;
-        }
-        let serial = super::next_serial(compositor);
-        if let Some(pointer) = compositor.seat.get_pointer() {
-            pointer.motion(
-                &mut compositor,
-                focus.clone(),
-                &MotionEvent {
-                    location,
-                    serial,
-                    time,
-                },
-            );
-            pointer.frame(&mut compositor);
-        }
-        if let Some((surface, _)) = focus
-            && let Some(keyboard) = compositor.seat.get_keyboard()
-        {
-            keyboard.set_focus(&mut compositor, Some(surface), serial);
-        }
+        compositor
+            .configured_sizes
+            .push((surface.wl_surface().clone(), size));
     }
+}
+
+fn begin_pan(compositor: &mut Compositor, button: u32) {
+    if compositor.pan_drag.is_some() || compositor.overview {
+        return;
+    }
+    compositor.pan_drag = Some(PanDragState {
+        button,
+        start: compositor.pointer_location,
+        initial_offset: compositor.pan_offset,
+    });
+    // Include adjacent matrix cells while dragging so the desktop moves as a canvas.
+    compositor.layout_dirty = true;
     compositor.needs_redraw = true;
 }
+
+fn update_pan(compositor: &mut Compositor, location: Point<f64, Logical>) {
+    if let Some(drag) = compositor.pan_drag {
+        let before = visible_view_set(compositor);
+        compositor.pointer_location = location;
+        compositor.pan_offset = (
+            drag.initial_offset.0 + location.x - drag.start.x,
+            drag.initial_offset.1 + location.y - drag.start.y,
+        );
+        if before != visible_view_set(compositor) {
+            compositor.layout_dirty = true;
+        }
+        compositor.needs_redraw = true;
+    }
+}
+
+fn visible_view_set(compositor: &Compositor) -> Vec<(i32, i32)> {
+    let width = compositor.output_size.0.max(1) as f64;
+    let height = compositor.output_size.1.max(1) as f64;
+    let mut views = Vec::new();
+    for (_, view) in &compositor.surface_views {
+        let x = view.0.saturating_sub(compositor.current_view.0) as f64 * width
+            + compositor.pan_offset.0;
+        let y = view.1.saturating_sub(compositor.current_view.1) as f64 * height
+            + compositor.pan_offset.1;
+        if x < width && x + width > 0.0 && y < height && y + height > 0.0 && !views.contains(view) {
+            views.push(*view);
+        }
+    }
+    views
+}
+
+fn finish_pan(compositor: &mut Compositor, button: u32) -> bool {
+    let Some(drag) = compositor.pan_drag else {
+        return false;
+    };
+    if drag.button != button {
+        return false;
+    }
+    let width = compositor.output_size.0.max(1) as f64;
+    let height = compositor.output_size.1.max(1) as f64;
+    let shift_x = (-compositor.pan_offset.0 / width).round() as i32;
+    let shift_y = (-compositor.pan_offset.1 / height).round() as i32;
+    compositor.current_view.0 = compositor.current_view.0.saturating_add(shift_x);
+    compositor.current_view.1 = compositor.current_view.1.saturating_add(shift_y);
+    compositor.pan_offset.0 += shift_x as f64 * width;
+    compositor.pan_offset.1 += shift_y as f64 * height;
+    compositor.pan_drag = None;
+    compositor.focused_index = 0;
+    compositor.layout_dirty = true;
+    compositor.needs_redraw = true;
+    true
+}
+
+fn store_floating_rect(
+    compositor: &mut Compositor,
+    surface: &WlSurface,
+    mut rect: (i32, i32, i32, i32),
+) {
+    if let Some((_, view)) = compositor
+        .surface_views
+        .iter()
+        .find(|(known, _)| known == surface)
+    {
+        rect.0 = rect.0.saturating_sub(
+            view.0
+                .saturating_sub(compositor.current_view.0)
+                .saturating_mul(compositor.output_size.0.max(1))
+                .saturating_add(compositor.pan_offset.0.round() as i32),
+        );
+        rect.1 = rect.1.saturating_sub(
+            view.1
+                .saturating_sub(compositor.current_view.1)
+                .saturating_mul(compositor.output_size.1.max(1))
+                .saturating_add(compositor.pan_offset.1.round() as i32),
+        );
+    }
+    if let Some((_, stored)) = compositor
+        .floating_rects
+        .iter_mut()
+        .find(|(known, _)| known == surface)
+    {
+        *stored = rect;
+    } else {
+        compositor.floating_rects.push((surface.clone(), rect));
+    }
+}
+
+fn centered_window_rect(output_size: (i32, i32)) -> (i32, i32, i32, i32) {
+    let (width, height) = (output_size.0.max(1), output_size.1.max(1));
+    let window_width = (width * 3 / 4).max(1);
+    let window_height = (height * 3 / 4).max(1);
+    (
+        (width - window_width) / 2,
+        (height - window_height) / 2,
+        window_width,
+        window_height,
+    )
+}
+
+fn clamp_rect(rect: (i32, i32, i32, i32), output_size: (i32, i32)) -> (i32, i32, i32, i32) {
+    let (output_width, output_height) = (output_size.0.max(1), output_size.1.max(1));
+    let width = rect.2.clamp(1, output_width);
+    let height = rect.3.clamp(1, output_height);
+    (
+        rect.0.clamp(0, output_width - width),
+        rect.1.clamp(0, output_height - height),
+        width,
+        height,
+    )
+}
+
+fn load_config() -> config::Config {
+    let config_home = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let config_dir = config_home.join("aetherwm");
+    config::load_config(config_dir.join("config.ars"))
+        .or_else(|_| config::load_config(config_dir.join("config.asr")))
+        .unwrap_or_default()
+}
+
+delegate_xdg_shell!(Compositor);
+delegate_compositor!(Compositor);
+delegate_shm!(Compositor);
+delegate_seat!(Compositor);
+delegate_data_device!(Compositor);
+delegate_output!(Compositor);

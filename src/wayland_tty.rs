@@ -430,14 +430,6 @@ fn handle_input_event<B: InputBackend>(compositor: &mut Compositor, event: Input
                             })
                             .map(|binding| binding.action.clone());
                         if let Some(action) = action {
-                            match action.as_str() {
-                                "toggleoverview" => {
-                                    compositor.overview = !compositor.overview;
-                                    compositor.layout_dirty = true;
-                                    compositor.needs_redraw = true;
-                                }
-                                _ => {}
-                            }
                             super::run_action(state, &action, &keyboard);
                             FilterResult::Intercept(())
                         } else {
